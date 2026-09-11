@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: postgres:16
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: toolshed
+      POSTGRES_PASSWORD: toolshed
+      POSTGRES_DB: toolshed
+    volumes:
+      - toolshed_pg:/var/lib/postgresql/data
+
+volumes:
+  toolshed_pg:

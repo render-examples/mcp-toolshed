@@ -1,0 +1,34 @@
+{
+  "name": "mcp-toolshed",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "tsx app/entrypoint.ts",
+    "dev": "node --env-file-if-exists=.env node_modules/.bin/tsx watch app/entrypoint.ts",
+    "dev:postgres": "docker compose up postgres",
+    "db:migrate": "node --env-file-if-exists=.env --import tsx scripts/migrate.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check": "npm run typecheck && npm test"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.0.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/server-github": "^2025.4.8",
+    "@modelcontextprotocol/server-slack": "^2025.4.25",
+    "hono": "^4.0.0",
+    "pg": "^8.23.0",
+    "tsx": "^4.19.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.23.1",
+    "typescript": "^5.5.0",
+    "vitest": "^4.1.11"
+  }
+}
