@@ -2,6 +2,7 @@
   "mcpServers": {
     "toolshed": {
       "url": "https://mcp-toolshed.onrender.com/mcp",
+      "envFile": "${userHome}/.cursor/toolshed.env",
       "headers": {
         "Authorization": "Bearer ${env:TOOLSHED_API_KEY}"
       }

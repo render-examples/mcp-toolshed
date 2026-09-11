@@ -110,17 +110,17 @@ Render prompts for these (`sync: false` in `render.yaml`):
 
 #### Post-deploy checklist
 
-1. Confirm health: `curl https://mcp-toolshed.onrender.com/ready`
+1. Confirm health: `curl https://<your-service>.onrender.com/ready`
 2. **Unset `TOOLSHED_BOOTSTRAP_API_KEY`** in the Dashboard — auth uses the `api_keys` table only after first migrate
 3. Connect your MCP client (see below)
 4. Add more API keys via Postgres if needed (see [RBAC](#rbac))
 
 ### 4. Connect an MCP client
 
-Production toolshed URL:
+Your toolshed URL:
 
 ```
-https://mcp-toolshed.onrender.com/mcp
+https://<your-service>.onrender.com/mcp
 ```
 
 All requests require:
@@ -137,7 +137,7 @@ Add to MCP settings (`.cursor/mcp.json` or Cursor Settings → MCP):
 {
   "mcpServers": {
     "toolshed": {
-      "url": "https://mcp-toolshed.onrender.com/mcp",
+      "url": "https://<your-service>.onrender.com/mcp",
       "headers": {
         "Authorization": "Bearer YOUR_API_KEY"
       }
