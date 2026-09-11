@@ -23,7 +23,7 @@ export const custom = defineInlineProvider({
 			},
 			risk: "read",
 			tags: ["support"],
-			async handler({ id }, _ctx) {
+			async handler({ id }, ctx) {
 				const base = process.env.TICKET_API_URL?.trim();
 				const key = process.env.TICKET_API_KEY?.trim();
 				if (!base || !key) {
@@ -37,12 +37,26 @@ export const custom = defineInlineProvider({
 						isError: true,
 					};
 				}
-				const res = await fetch(`${base}/tickets/${encodeURIComponent(String(id))}`, {
-					headers: { Authorization: `Bearer ${key}` },
-				});
+				const res = await fetch(
+					`${base.replace(/\/$/, "")}/tickets/${encodeURIComponent(String(id))}`,
+					{
+						headers: { Authorization: `Bearer ${key}` },
+						signal: ctx.signal,
+					},
+				);
+				if (!res.ok) {
+					return {
+						content: [
+							{
+								type: "text",
+								text: `ticket API request failed (${res.status})`,
+							},
+						],
+						isError: true,
+					};
+				}
 				return {
 					content: [{ type: "text", text: await res.text() }],
-					isError: !res.ok,
 				};
 			},
 		}),

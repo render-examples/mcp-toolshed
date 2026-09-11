@@ -2,6 +2,12 @@
 
 Research compiled from engineering blogs, InfoQ, enterprise case studies, open-source reference implementations, and the MCP spec. Goal: inform a **standalone MCP Toolshed module template** for Render users.
 
+> Implementation note (September 2026): provider snippets below are historical
+> design examples. The shipped implementation uses GitHub's official hosted MCP
+> endpoint and an in-process Slack Web API adapter because the original
+> `@modelcontextprotocol/server-github` and
+> `@modelcontextprotocol/server-slack` packages are deprecated.
+
 ---
 
 ## 1. What is a Toolshed?

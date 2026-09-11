@@ -12,10 +12,13 @@ export const META_TOOLS: ToolDefinition[] = [
 			properties: {
 				query: {
 					type: "string",
+					minLength: 1,
 					description: "What you want to do, e.g. 'list render services'",
 				},
 				limit: {
-					type: "number",
+					type: "integer",
+					minimum: 1,
+					maximum: 50,
 					description: "Max results (default 10)",
 				},
 			},
@@ -34,6 +37,7 @@ export const META_TOOLS: ToolDefinition[] = [
 			properties: {
 				name: {
 					type: "string",
+					minLength: 1,
 					description: "Fully qualified tool name, e.g. render.list_services",
 				},
 			},

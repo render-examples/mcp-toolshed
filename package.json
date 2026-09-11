@@ -7,29 +7,30 @@
     "node": ">=22"
   },
   "scripts": {
-    "start": "tsx app/entrypoint.ts",
+    "build": "tsc -p tsconfig.build.json && node -e \"require('node:fs').cpSync('migrations', 'dist/migrations', { recursive: true })\"",
+    "start": "node dist/app/entrypoint.js",
     "dev": "node --env-file-if-exists=.env node_modules/.bin/tsx watch app/entrypoint.ts",
     "dev:postgres": "docker compose up postgres",
     "db:migrate": "node --env-file-if-exists=.env --import tsx scripts/migrate.ts",
+    "db:migrate:prod": "node dist/scripts/migrate.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "check": "npm run typecheck && npm test",
     "rbac:seed-keys": "tsx scripts/seed-rbac-keys.ts",
+    "rbac:insert-keys": "node --env-file-if-exists=.env --import tsx scripts/insert-rbac-keys.ts",
     "rbac:test-live": "node --env-file-if-exists=.env node_modules/.bin/tsx scripts/test-live-rbac.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.0.0",
-    "@modelcontextprotocol/sdk": "^1.29.0",
-    "@modelcontextprotocol/server-github": "^2025.4.8",
-    "@modelcontextprotocol/server-slack": "^2025.4.25",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "ajv": "^8.20.0",
     "hono": "^4.0.0",
-    "pg": "^8.23.0",
-    "tsx": "^4.19.0",
-    "zod": "^3.24.0"
+    "pg": "^8.23.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/pg": "^8.23.1",
+    "tsx": "^4.23.13",
     "typescript": "^5.5.0",
     "vitest": "^4.1.11"
   }

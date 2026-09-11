@@ -15,6 +15,8 @@ Agent → POST /mcp → search_tools → get_tool_schema → tools/call → prov
 ```
 
 `tools/list` intentionally returns only meta-tools. Server instructions tell agents to use progressive discovery.
+The public `/mcp` endpoint uses MCP Streamable HTTP in stateless JSON-response
+mode; protocol-level sessions are not persisted between requests.
 
 ---
 
@@ -58,6 +60,10 @@ npm run db:migrate              # applies migrations + inserts bootstrap key
 npm run dev                     # http://localhost:3000
 ```
 
+`npm run build` compiles the production application to `dist/`. The Docker
+image runs that JavaScript directly; `tsx` is used only by local development
+and maintenance scripts.
+
 Verify:
 
 ```bash
@@ -97,12 +103,15 @@ Render prompts for these (`sync: false` in `render.yaml`):
 |----------|----------|---------|
 | `TOOLSHED_BOOTSTRAP_API_KEY` | **Yes (first deploy)** | Admin API key; hashed into `api_keys` on migrate |
 | `RENDER_API_KEY` | Recommended | Enables Render MCP tools (`render.*`) |
-| `GITHUB_TOKEN` | Optional | Enables GitHub tools (`github.*`) |
+| `GITHUB_TOKEN` | Optional | Enables GitHub tools through GitHub's hosted MCP server (`github.*`) |
+| `GITHUB_MCP_URL` | Optional | Defaults to `https://api.githubcopilot.com/mcp/` |
 | `SLACK_BOT_TOKEN` | Optional | Slack bot token (`xoxb-...`) — see [Slack setup](#slack-setup) |
 | `SLACK_TEAM_ID` | With Slack | Workspace ID (`T...`) — required with `SLACK_BOT_TOKEN` |
 | `SLACK_CHANNEL_IDS` | Optional | Comma-separated channel IDs to limit access |
 | `RENDER_MCP_URL` | Optional | Defaults to `https://mcp.render.com/mcp` |
 | `TICKET_API_URL` / `TICKET_API_KEY` | Optional | Enables custom inline provider stub |
+| `TOOLSHED_AUDIT_RETENTION_DAYS` | Optional | Audit retention; defaults to 30 days |
+| `TOOLSHED_AUDIT_MAX_ARGUMENT_BYTES` | Optional | Maximum stored argument payload; defaults to 65536 bytes |
 
 **Health check note:** `/ready` returns 200 only when Postgres is up **and** at least one provider loaded tools. For a working deploy, set `RENDER_API_KEY` (or another provider credential). Use `TOOLSHED_ALLOW_EMPTY=true` only for dev/testing.
 
@@ -174,8 +183,8 @@ Providers are TypeScript modules in `providers/`. Each is enabled when its env v
 | Provider | File | Enable with |
 |----------|------|-------------|
 | Render | `providers/render.ts` | `RENDER_API_KEY` |
-| GitHub | `providers/github.ts` | `GITHUB_TOKEN` |
-| Slack | `providers/slack.ts` | `SLACK_BOT_TOKEN` + `SLACK_TEAM_ID` |
+| GitHub | `providers/github.ts` | `GITHUB_TOKEN` (official hosted MCP) |
+| Slack | `providers/slack.ts` | `SLACK_BOT_TOKEN` + `SLACK_TEAM_ID` (direct Web API adapter) |
 | Custom | `providers/custom.ts` | `TICKET_API_URL` + `TICKET_API_KEY` |
 
 To add a new provider:
@@ -221,10 +230,12 @@ See [Setup guide §6](#6-add-or-enable-providers) for the workflow. Provider typ
 | Type | Use for |
 |------|---------|
 | `mcp-remote` | Hosted MCP servers (Render MCP) |
-| `mcp-stdio` | Bundled community MCP servers (GitHub, Slack) |
+| `mcp-stdio` | Locally installed MCP binaries that require stdio |
 | `inline` | Custom REST APIs with TypeScript handlers |
 
-GitHub and Slack use packages from `package.json` (not `npx` at runtime).
+GitHub uses GitHub's maintained hosted MCP endpoint with PAT authentication.
+Slack uses a small in-process Web API adapter so bot-token deployments do not
+depend on the archived reference MCP package.
 
 ## RBAC
 
@@ -249,10 +260,29 @@ INSERT INTO api_keys (key_hash, role, label)
 VALUES ('<hash-from-above>', 'implementer', 'ci-bot');
 ```
 
+Keys can be time-bounded with `expires_at` or revoked without deleting audit
+history:
+
+```sql
+UPDATE api_keys SET revoked_at = now() WHERE label = 'ci-bot';
+```
+
 ## Health
 
-- `GET /ready` — 200 when Postgres is up and at least one provider tool is loaded (or `TOOLSHED_ALLOW_EMPTY=true`)
-- `GET /health` — same checks with full status payload
+- `GET /ready` — 200 when Postgres is up, configured providers are healthy, and at least one provider tool is loaded (or `TOOLSHED_ALLOW_EMPTY=true`)
+- `GET /health` — same checks plus per-provider and audit-pipeline health,
+  tool counts, timestamps, and last errors
+
+Provider calls are serialized through bounded queues and cancelled at their
+configured deadline. A failed provider call marks that provider unhealthy;
+a later successful call restores it.
+
+## Audit retention
+
+Arguments are recursively redacted before storage, including nested secret
+objects and environment-variable key/value pairs. Oversized payloads are
+truncated. Cleanup runs opportunistically after audit writes (at most hourly)
+and deletes rows older than `TOOLSHED_AUDIT_RETENTION_DAYS`.
 
 ## Project layout
 

@@ -23,6 +23,12 @@ function mockRegistry(tools: ToolDefinition[]): ToolRegistry {
 				callTool: async () => ({
 					content: [{ type: "text", text: "upstream-ok" }],
 				}),
+				status: () => ({
+					id: tool.providerId,
+					configured: true,
+					healthy: true,
+					toolCount: 1,
+				}),
 			});
 		}
 	}
@@ -52,10 +58,20 @@ describe("handleToolCall", () => {
 	const dispatcher = new ToolshedDispatcher(mockRegistry(tools));
 
 	it("rejects empty search query", async () => {
-		const result = await handleToolCall(dispatcher, { role: "admin" }, "search_tools", {
-			query: "  ",
-		});
-		expect(result.isError).toBe(true);
+		await expect(
+			handleToolCall(dispatcher, { role: "admin" }, "search_tools", {
+				query: "",
+			}),
+		).rejects.toThrow("invalid arguments");
+	});
+
+	it("rejects string search limits instead of silently coercing them", async () => {
+		await expect(
+			handleToolCall(dispatcher, { role: "admin" }, "search_tools", {
+				query: "render",
+				limit: "30",
+			}),
+		).rejects.toThrow("invalid arguments");
 	});
 
 	it("passes through provider content without double-encoding", async () => {
@@ -67,5 +83,19 @@ describe("handleToolCall", () => {
 		);
 		expect(result.content[0]?.text).toBe("upstream-ok");
 		expect(result.isError).toBeUndefined();
+	});
+
+	it("returns schemas for advertised meta-tools", async () => {
+		const result = await handleToolCall(
+			dispatcher,
+			{ role: "admin" },
+			"get_tool_schema",
+			{ name: "search_tools" },
+		);
+		expect(result.isError).toBeUndefined();
+		expect(JSON.parse(result.content[0]!.text)).toMatchObject({
+			name: "search_tools",
+			risk: "read",
+		});
 	});
 });

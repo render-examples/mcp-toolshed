@@ -1,7 +1,7 @@
 import { McpRemoteClient } from "../toolshed/mcp-client.js";
 
 const URL =
-	process.env.TOOLSHED_URL?.trim() ?? "https://mcp-toolshed.onrender.com/mcp";
+	process.env.TOOLSHED_URL?.trim() ?? "http://localhost:3000/mcp";
 
 interface SearchHit {
 	name: string;

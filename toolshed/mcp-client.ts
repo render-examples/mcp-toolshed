@@ -1,6 +1,6 @@
 import type { McpRemoteProviderConfig, ToolCallResult } from "./types.js";
 
-const PROTOCOL_VERSION = "2025-06-18";
+const DEFAULT_PROTOCOL_VERSION = "2025-06-18";
 const DEFAULT_TIMEOUT_MS = 60_000;
 
 interface JsonRpcResponse {
@@ -19,6 +19,7 @@ export class McpRemoteClient {
 	private sessionId?: string;
 	private nextId = 1;
 	private ready?: Promise<void>;
+	private protocolVersion = DEFAULT_PROTOCOL_VERSION;
 
 	constructor(
 		private readonly url: string,
@@ -40,14 +41,16 @@ export class McpRemoteClient {
 		return new McpRemoteClient(config.url, headers);
 	}
 
-	async listTools(): Promise<McpTool[]> {
-		await this.initialize();
+	async listTools(signal?: AbortSignal): Promise<McpTool[]> {
+		await this.initialize(signal);
 		const tools: McpTool[] = [];
 		let cursor: string | undefined;
 		do {
 			const result = await this.rpc(
 				"tools/list",
 				cursor ? { cursor } : {},
+				DEFAULT_TIMEOUT_MS,
+				signal,
 			);
 			const page = result as {
 				tools?: McpTool[];
@@ -62,41 +65,62 @@ export class McpRemoteClient {
 	async callTool(
 		name: string,
 		args: Record<string, unknown>,
+		signal?: AbortSignal,
 	): Promise<ToolCallResult> {
-		await this.initialize();
-		const result = await this.rpc("tools/call", {
-			name,
-			arguments: args,
-		});
-		return normalizeToolResult(result);
+		try {
+			await this.initialize(signal);
+			const result = await this.rpc("tools/call", {
+				name,
+				arguments: args,
+			}, DEFAULT_TIMEOUT_MS, signal);
+			return normalizeToolResult(result);
+		} catch (error) {
+			this.invalidateSession();
+			throw error;
+		}
 	}
 
-	private initialize(): Promise<void> {
-		this.ready ??= this.handshake();
+	private initialize(signal?: AbortSignal): Promise<void> {
+		this.ready ??= this.handshake(signal).catch((error) => {
+			this.ready = undefined;
+			throw error;
+		});
 		return this.ready;
 	}
 
-	private async handshake(): Promise<void> {
-		await this.rpc("initialize", {
-			protocolVersion: PROTOCOL_VERSION,
+	private async handshake(signal?: AbortSignal): Promise<void> {
+		const result = await this.rpc("initialize", {
+			protocolVersion: DEFAULT_PROTOCOL_VERSION,
 			capabilities: {},
 			clientInfo: { name: "mcp-toolshed", version: "0.1.0" },
-		});
+		}, DEFAULT_TIMEOUT_MS, signal);
+		if (
+			result &&
+			typeof result === "object" &&
+			typeof (result as { protocolVersion?: unknown }).protocolVersion ===
+				"string"
+		) {
+			this.protocolVersion = (
+				result as { protocolVersion: string }
+			).protocolVersion;
+		}
 		await this.send({
 			jsonrpc: "2.0",
 			method: "notifications/initialized",
-		});
+		}, DEFAULT_TIMEOUT_MS, signal);
 	}
 
 	private async rpc(
 		method: string,
 		params: Record<string, unknown>,
 		timeoutMs = DEFAULT_TIMEOUT_MS,
+		signal?: AbortSignal,
 	): Promise<unknown> {
 		const id = this.nextId++;
 		const messages = await this.send(
 			{ jsonrpc: "2.0", id, method, params },
 			timeoutMs,
+			signal,
 		);
 		if (!messages) {
 			throw new Error(`${method} returned no body`);
@@ -114,11 +138,12 @@ export class McpRemoteClient {
 	private async send(
 		body: Record<string, unknown>,
 		timeoutMs = DEFAULT_TIMEOUT_MS,
+		signal?: AbortSignal,
 	): Promise<JsonRpcResponse[] | null> {
 		const headers: Record<string, string> = {
 			"content-type": "application/json",
 			accept: "application/json, text/event-stream",
-			"mcp-protocol-version": PROTOCOL_VERSION,
+			"mcp-protocol-version": this.protocolVersion,
 			...this.headers,
 		};
 		if (this.sessionId) {
@@ -129,7 +154,9 @@ export class McpRemoteClient {
 			method: "POST",
 			headers,
 			body: JSON.stringify(body),
-			signal: AbortSignal.timeout(timeoutMs),
+			signal: signal
+				? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)])
+				: AbortSignal.timeout(timeoutMs),
 		});
 
 		const session = response.headers.get("mcp-session-id");
@@ -139,6 +166,9 @@ export class McpRemoteClient {
 
 		if (!response.ok) {
 			const detail = await response.text().catch(() => "");
+			if (response.status === 404 && this.sessionId) {
+				this.invalidateSession();
+			}
 			throw new Error(
 				`MCP ${this.url} responded ${response.status}: ${detail.slice(0, 300)}`,
 			);
@@ -155,21 +185,33 @@ export class McpRemoteClient {
 			"text/event-stream",
 		)
 			? parseSse(text)
-			: [JSON.parse(text) as JsonRpcResponse];
+			: parseJsonRpcMessages(text);
 	}
+
+	private invalidateSession(): void {
+		this.sessionId = undefined;
+		this.ready = undefined;
+		this.protocolVersion = DEFAULT_PROTOCOL_VERSION;
+	}
+}
+
+function parseJsonRpcMessages(text: string): JsonRpcResponse[] {
+	const parsed = JSON.parse(text) as JsonRpcResponse | JsonRpcResponse[];
+	return Array.isArray(parsed) ? parsed : [parsed];
 }
 
 function parseSse(text: string): JsonRpcResponse[] {
 	const messages: JsonRpcResponse[] = [];
-	for (const line of text.split("\n")) {
-		if (!line.startsWith("data: ")) {
-			continue;
+	for (const event of text.split(/\r?\n\r?\n/)) {
+		const payload = event
+			.split(/\r?\n/)
+			.filter((line) => line.startsWith("data:"))
+			.map((line) => line.slice(5).trimStart())
+			.join("\n")
+			.trim();
+		if (payload) {
+			messages.push(JSON.parse(payload) as JsonRpcResponse);
 		}
-		const payload = line.slice(6).trim();
-		if (!payload) {
-			continue;
-		}
-		messages.push(JSON.parse(payload) as JsonRpcResponse);
 	}
 	return messages;
 }

@@ -2,6 +2,7 @@ import { canDiscover, canExecute } from "./rbac.js";
 import { rankByQuery } from "./search.js";
 import type { ToolRegistry } from "./registry.js";
 import type { Caller, ToolCallResult, ToolDefinition } from "./types.js";
+import { validateToolArguments } from "./validate.js";
 
 export class AccessDeniedError extends Error {
 	constructor(message: string) {
@@ -50,6 +51,7 @@ export class ToolshedDispatcher {
 		if (!canExecute(caller, tool)) {
 			throw new AccessDeniedError(`not allowed to execute ${name}`);
 		}
+		validateToolArguments(tool, args);
 		const provider = this.registry.getProvider(tool.providerId);
 		if (!provider) {
 			throw new Error(`provider not found: ${tool.providerId}`);

@@ -1,7 +1,8 @@
 import type { ToolshedDispatcher } from "./dispatcher.js";
 import { MAX_SEARCH_LIMIT } from "./constants.js";
-import { isMetaTool } from "./meta-tools.js";
+import { isMetaTool, META_TOOLS } from "./meta-tools.js";
 import type { Caller, ToolCallResult } from "./types.js";
+import { validateToolArguments } from "./validate.js";
 
 export type McpToolResponse = {
 	content: Array<{ type: "text"; text: string }>;
@@ -14,6 +15,11 @@ export async function handleToolCall(
 	name: string,
 	args: Record<string, unknown>,
 ): Promise<McpToolResponse> {
+	const metaTool = META_TOOLS.find((tool) => tool.name === name);
+	if (metaTool) {
+		validateToolArguments(metaTool, args);
+	}
+
 	if (name === "search_tools") {
 		const query = String(args.query ?? "").trim();
 		if (!query) {
@@ -29,7 +35,9 @@ export async function handleToolCall(
 		if (!toolName) {
 			return toolError("name is required");
 		}
-		const tool = dispatcher.getToolSchema(toolName, caller);
+		const tool =
+			META_TOOLS.find((candidate) => candidate.name === toolName) ??
+			dispatcher.getToolSchema(toolName, caller);
 		return jsonResult({
 			name: tool.name,
 			description: tool.description,

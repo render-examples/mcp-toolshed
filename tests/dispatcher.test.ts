@@ -5,6 +5,7 @@ import {
 } from "../toolshed/dispatcher.js";
 import { ToolRegistry } from "../toolshed/registry.js";
 import type { ResolvedProvider, ToolDefinition } from "../toolshed/types.js";
+import { InvalidToolArgumentsError } from "../toolshed/validate.js";
 
 function mockRegistry(tools: ToolDefinition[]): ToolRegistry {
 	const registry = Object.create(ToolRegistry.prototype) as ToolRegistry;
@@ -24,6 +25,12 @@ function mockRegistry(tools: ToolDefinition[]): ToolRegistry {
 				tools: [],
 				callTool: async () => ({
 					content: [{ type: "text", text: "ok" }],
+				}),
+				status: () => ({
+					id: tool.providerId,
+					configured: true,
+					healthy: true,
+					toolCount: 1,
 				}),
 			});
 		}
@@ -50,7 +57,11 @@ const sampleTools: ToolDefinition[] = [
 	{
 		name: "github.create_pull_request",
 		description: "Open PR",
-		inputSchema: { type: "object" },
+		inputSchema: {
+			type: "object",
+			properties: { title: { type: "string", minLength: 1 } },
+			required: ["title"],
+		},
 		risk: "write",
 		tags: ["code"],
 		providerId: "github",
@@ -73,5 +84,16 @@ describe("dispatcher", () => {
 				role: "deploy-manager",
 			}),
 		).toThrow(AccessDeniedError);
+	});
+
+	it("validates arguments before invoking a provider", async () => {
+		const dispatcher = new ToolshedDispatcher(mockRegistry(sampleTools));
+		await expect(
+			dispatcher.callTool(
+				"github.create_pull_request",
+				{},
+				{ role: "implementer" },
+			),
+		).rejects.toBeInstanceOf(InvalidToolArgumentsError);
 	});
 });

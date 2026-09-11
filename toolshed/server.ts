@@ -44,26 +44,43 @@ function mcpUnauthorizedResponse(): Response {
 	);
 }
 
+function mcpServiceUnavailableResponse(): Response {
+	return new Response(
+		JSON.stringify({
+			jsonrpc: "2.0",
+			error: { code: -32002, message: "Authentication service unavailable" },
+			id: null,
+		}),
+		{
+			status: 503,
+			headers: { "content-type": "application/json" },
+		},
+	);
+}
+
 export function createApp(options: ToolshedAppOptions) {
 	const { dispatcher, registry, resolveCaller: resolveCallerFn } = options;
 	const auth = resolveCallerFn ?? resolveCaller;
 	const app = new Hono();
+	const corsOrigin = process.env.TOOLSHED_CORS_ORIGIN?.trim();
 
-	app.use(
-		"*",
-		cors({
-			origin: process.env.TOOLSHED_CORS_ORIGIN?.trim() || "*",
-			allowMethods: ["GET", "POST", "DELETE", "OPTIONS"],
-			allowHeaders: [
-				"Content-Type",
-				"Authorization",
-				"mcp-session-id",
-				"Last-Event-ID",
-				"mcp-protocol-version",
-			],
-			exposeHeaders: ["mcp-session-id", "mcp-protocol-version"],
-		}),
-	);
+	if (corsOrigin) {
+		app.use(
+			"*",
+			cors({
+				origin: corsOrigin,
+				allowMethods: ["GET", "POST", "DELETE", "OPTIONS"],
+				allowHeaders: [
+					"Content-Type",
+					"Authorization",
+					"mcp-session-id",
+					"Last-Event-ID",
+					"mcp-protocol-version",
+				],
+				exposeHeaders: ["mcp-session-id", "mcp-protocol-version"],
+			}),
+		);
+	}
 
 	app.get("/health", async (c) => {
 		const status = await checkHealth(registry);
@@ -79,7 +96,13 @@ export function createApp(options: ToolshedAppOptions) {
 	});
 
 	app.all("/mcp", async (c) => {
-		const caller = await auth(c.req.header("Authorization"));
+		let caller: Caller | null;
+		try {
+			caller = await auth(c.req.header("Authorization"));
+		} catch (error) {
+			console.error("caller resolution failed:", error);
+			return mcpServiceUnavailableResponse();
+		}
 		if (!caller) {
 			return mcpUnauthorizedResponse();
 		}

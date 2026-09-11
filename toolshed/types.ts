@@ -25,6 +25,7 @@ export interface ToolCallResult {
 
 export interface ToolHandlerContext {
 	caller: Caller;
+	signal?: AbortSignal;
 }
 
 export interface InlineToolDefinition extends ToolDefinition {
@@ -39,6 +40,8 @@ export interface BaseProviderConfig {
 	toolPrefix: string;
 	risk: Risk;
 	tags: string[];
+	/** Maximum time a provider tool call may run before it is cancelled. */
+	timeoutMs?: number;
 	/** Return false to skip loading this provider (e.g. missing env). */
 	enabled?: () => boolean;
 }
@@ -63,6 +66,7 @@ export interface McpStdioProviderConfig extends BaseProviderConfig {
 export interface InlineProviderConfig extends BaseProviderConfig {
 	type: "inline";
 	tools: InlineToolDefinition[];
+	initialize?: (signal?: AbortSignal) => Promise<void>;
 }
 
 export type ProviderConfig =
@@ -78,7 +82,17 @@ export interface ResolvedProvider {
 		args: Record<string, unknown>,
 		ctx: ToolHandlerContext,
 	) => Promise<ToolCallResult>;
+	status: () => ProviderStatus;
+	probe?: (signal?: AbortSignal) => Promise<void>;
 	shutdown?: () => Promise<void>;
+}
+
+export interface ProviderStatus {
+	id: string;
+	configured: boolean;
+	healthy: boolean;
+	toolCount: number;
+	error?: string;
 }
 
 export const ROLE_NAMES: readonly RoleName[] = [

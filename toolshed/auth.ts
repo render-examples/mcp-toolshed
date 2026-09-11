@@ -8,10 +8,11 @@ export function hashApiKey(key: string): string {
 }
 
 export function parseBearerToken(header: string | undefined): string | null {
-	if (!header?.startsWith("Bearer ")) {
+	const match = header?.match(/^\s*Bearer[ \t]+(.+?)\s*$/i);
+	if (!match) {
 		return null;
 	}
-	const token = header.slice("Bearer ".length).trim();
+	const token = match[1]?.trim();
 	return token || null;
 }
 
@@ -28,7 +29,12 @@ export async function resolveCaller(
 	}
 
 	const { rows } = await db().query<{ role: string; label: string | null }>(
-		"SELECT role, label FROM api_keys WHERE key_hash = $1 LIMIT 1",
+		`SELECT role, label
+		   FROM api_keys
+		  WHERE key_hash = $1
+		    AND revoked_at IS NULL
+		    AND (expires_at IS NULL OR expires_at > now())
+		  LIMIT 1`,
 		[hashApiKey(token)],
 	);
 	if (!rows[0]) {

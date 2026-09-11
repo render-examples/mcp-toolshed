@@ -10,7 +10,7 @@ services:
     name: mcp-toolshed
     runtime: docker
     plan: starter
-    preDeployCommand: npm run db:migrate
+    preDeployCommand: npm run db:migrate:prod
     healthCheckPath: /ready
     envVars:
       - key: DATABASE_URL
@@ -26,6 +26,8 @@ services:
         sync: false
       - key: GITHUB_TOKEN
         sync: false
+      - key: GITHUB_MCP_URL
+        value: https://api.githubcopilot.com/mcp/
       - key: SLACK_BOT_TOKEN
         sync: false
       - key: SLACK_TEAM_ID
@@ -42,3 +44,7 @@ services:
         sync: false
       - key: TICKET_API_KEY
         sync: false
+      - key: TOOLSHED_AUDIT_RETENTION_DAYS
+        value: "30"
+      - key: TOOLSHED_AUDIT_MAX_ARGUMENT_BYTES
+        value: "65536"

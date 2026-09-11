@@ -32,4 +32,23 @@ describe("createApp", () => {
 		expect(body.jsonrpc).toBe("2.0");
 		expect(body.error?.code).toBe(-32001);
 	});
+
+	it("returns MCP-shaped 503 when caller resolution fails", async () => {
+		const app = createApp({
+			dispatcher: new ToolshedDispatcher(emptyRegistry()),
+			registry: emptyRegistry(),
+			resolveCaller: async () => {
+				throw new Error("database unavailable");
+			},
+		});
+		const res = await app.request("/mcp", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: "{}",
+		});
+		expect(res.status).toBe(503);
+		const body = await res.json();
+		expect(body.jsonrpc).toBe("2.0");
+		expect(body.error?.code).toBe(-32002);
+	});
 });

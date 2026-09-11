@@ -3,6 +3,7 @@ import { loadRegistry } from "../providers/index.js";
 import { closeDb } from "../toolshed/db.js";
 import { ToolshedDispatcher } from "../toolshed/dispatcher.js";
 import { createApp } from "../toolshed/server.js";
+import { closeServer } from "../toolshed/shutdown.js";
 
 const port = Number(process.env.PORT ?? 3000);
 
@@ -18,12 +19,24 @@ console.log(`  tools:  ${registry.toolCount()} provider tool(s) indexed`);
 
 const server = serve({ fetch: app.fetch, hostname: "0.0.0.0", port });
 
-async function shutdown(signal: string) {
+let shutdownPromise: Promise<void> | undefined;
+
+function shutdown(signal: string): Promise<void> {
+	shutdownPromise ??= performShutdown(signal);
+	return shutdownPromise;
+}
+
+async function performShutdown(signal: string): Promise<void> {
 	console.log(`${signal} received — shutting down`);
-	server.close();
-	await registry.shutdown();
-	await closeDb();
-	process.exit(0);
+	try {
+		await closeServer(server);
+		await registry.shutdown();
+		await closeDb();
+		console.log("shutdown complete");
+	} catch (error) {
+		console.error("shutdown failed:", error);
+		process.exitCode = 1;
+	}
 }
 
 process.on("SIGTERM", () => void shutdown("SIGTERM"));

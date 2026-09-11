@@ -1,11 +1,14 @@
-import { defineMcpStdioProvider } from "../toolshed/provider.js";
+import { defineMcpRemoteProvider } from "../toolshed/provider.js";
 
-export const github = defineMcpStdioProvider({
+export const github = defineMcpRemoteProvider({
 	id: "github",
-	command: "node",
-	args: ["node_modules/@modelcontextprotocol/server-github/dist/index.js"],
-	env: {
-		GITHUB_PERSONAL_ACCESS_TOKEN: process.env.GITHUB_TOKEN?.trim() ?? "",
+	url:
+		process.env.GITHUB_MCP_URL?.trim() ??
+		"https://api.githubcopilot.com/mcp/",
+	auth: {
+		header: "Authorization",
+		env: "GITHUB_TOKEN",
+		prefix: "Bearer ",
 	},
 	toolPrefix: "github",
 	risk: "write",
