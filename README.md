@@ -98,7 +98,9 @@ Render prompts for these (`sync: false` in `render.yaml`):
 | `TOOLSHED_BOOTSTRAP_API_KEY` | **Yes (first deploy)** | Admin API key; hashed into `api_keys` on migrate |
 | `RENDER_API_KEY` | Recommended | Enables Render MCP tools (`render.*`) |
 | `GITHUB_TOKEN` | Optional | Enables GitHub tools (`github.*`) |
-| `SLACK_BOT_TOKEN` | Optional | Enables Slack tools (`slack.*`) |
+| `SLACK_BOT_TOKEN` | Optional | Slack bot token (`xoxb-...`) — see [Slack setup](#slack-setup) |
+| `SLACK_TEAM_ID` | With Slack | Workspace ID (`T...`) — required with `SLACK_BOT_TOKEN` |
+| `SLACK_CHANNEL_IDS` | Optional | Comma-separated channel IDs to limit access |
 | `RENDER_MCP_URL` | Optional | Defaults to `https://mcp.render.com/mcp` |
 | `TICKET_API_URL` / `TICKET_API_KEY` | Optional | Enables custom inline provider stub |
 
@@ -108,17 +110,17 @@ Render prompts for these (`sync: false` in `render.yaml`):
 
 #### Post-deploy checklist
 
-1. Confirm health: `curl https://<your-service>.onrender.com/ready`
+1. Confirm health: `curl https://mcp-toolshed.onrender.com/ready`
 2. **Unset `TOOLSHED_BOOTSTRAP_API_KEY`** in the Dashboard — auth uses the `api_keys` table only after first migrate
 3. Connect your MCP client (see below)
 4. Add more API keys via Postgres if needed (see [RBAC](#rbac))
 
 ### 4. Connect an MCP client
 
-Your toolshed URL:
+Production toolshed URL:
 
 ```
-https://<your-service>.onrender.com/mcp
+https://mcp-toolshed.onrender.com/mcp
 ```
 
 All requests require:
@@ -173,7 +175,7 @@ Providers are TypeScript modules in `providers/`. Each is enabled when its env v
 |----------|------|-------------|
 | Render | `providers/render.ts` | `RENDER_API_KEY` |
 | GitHub | `providers/github.ts` | `GITHUB_TOKEN` |
-| Slack | `providers/slack.ts` | `SLACK_BOT_TOKEN` |
+| Slack | `providers/slack.ts` | `SLACK_BOT_TOKEN` + `SLACK_TEAM_ID` |
 | Custom | `providers/custom.ts` | `TICKET_API_URL` + `TICKET_API_KEY` |
 
 To add a new provider:
@@ -181,6 +183,21 @@ To add a new provider:
 1. Create `providers/my-api.ts` (copy a stub)
 2. Register it in `providers/index.ts`
 3. Commit, push, and redeploy
+
+### Slack setup
+
+1. Create an app at [api.slack.com/apps](https://api.slack.com/apps) → **From scratch**
+2. **OAuth & Permissions** → add bot scopes: `channels:history`, `channels:read`, `chat:write`, `reactions:write`, `users:read`, `users.profile:read`
+3. **Install to Workspace** → copy the **Bot User OAuth Token** (`xoxb-...`)
+4. Get your **Workspace ID** (`T...`) from [Slack workspace settings](https://slack.com/help/articles/221769328-Locate-your-Slack-URL-or-ID#find-your-workspace-or-org-id)
+5. Set on the Render service (or local `.env`):
+
+```
+SLACK_BOT_TOKEN=xoxb-...
+SLACK_TEAM_ID=T...
+```
+
+6. Redeploy, then `/invite @your-bot` in any channel the agent should use
 
 ### Troubleshooting
 
@@ -190,6 +207,7 @@ To add a new provider:
 | `401` on `/mcp` | Check `Authorization: Bearer …` matches a key in `api_keys` |
 | Deploy stuck on health check | Postgres not ready, or zero providers loaded — check logs |
 | No Render tools in search | Verify `RENDER_API_KEY` is set and service restarted after adding it |
+| No Slack tools in search | Set both `SLACK_BOT_TOKEN` and `SLACK_TEAM_ID`, then redeploy |
 | Bootstrap key stopped working | Expected after unsetting env var — key should still work via `api_keys` table; re-run migrate if needed |
 
 View logs in the Render Dashboard → **mcp-toolshed** → **Logs**.

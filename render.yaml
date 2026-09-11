@@ -28,6 +28,10 @@ services:
         sync: false
       - key: SLACK_BOT_TOKEN
         sync: false
+      - key: SLACK_TEAM_ID
+        sync: false
+      - key: SLACK_CHANNEL_IDS
+        sync: false
       - key: TICKET_API_URL
         sync: false
       - key: TICKET_API_KEY
