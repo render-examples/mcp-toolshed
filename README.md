@@ -30,7 +30,7 @@ Agent → POST /mcp → search_tools → get_tool_schema → tools/call → prov
 ### 1. Clone and configure
 
 ```bash
-git clone https://github.com/render-examples/mcp-toolshed.git
+git clone https://github.com/render-lab/mcp-toolshed.git
 cd mcp-toolshed
 cp .env.example .env
 ```
@@ -86,7 +86,7 @@ Select your workspace and confirm resource creation when prompted.
 #### Option B — Render Dashboard
 
 1. Go to [dashboard.render.com](https://dashboard.render.com) → **New** → **Blueprint**
-2. Connect the `render-examples/mcp-toolshed` repository
+2. Connect the `render-lab/mcp-toolshed` repository
 3. Review the two resources (`mcp-toolshed`, `toolshed-db`) and apply
 
 #### Secrets to set at deploy time
