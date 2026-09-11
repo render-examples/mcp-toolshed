@@ -32,6 +32,12 @@ services:
         sync: false
       - key: SLACK_CHANNEL_IDS
         sync: false
+      - key: TOOLSHED_KEY_ANALYST
+        sync: false
+      - key: TOOLSHED_KEY_IMPLEMENTER
+        sync: false
+      - key: TOOLSHED_KEY_DEPLOY_MANAGER
+        sync: false
       - key: TICKET_API_URL
         sync: false
       - key: TICKET_API_KEY

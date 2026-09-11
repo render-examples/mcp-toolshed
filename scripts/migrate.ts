@@ -53,5 +53,31 @@ if (bootstrap) {
 	);
 }
 
+const optionalRoleKeys: Array<[string, string, string]> = [
+	["TOOLSHED_KEY_ANALYST", "analyst", "rbac-test-analyst"],
+	["TOOLSHED_KEY_IMPLEMENTER", "implementer", "rbac-test-implementer"],
+	[
+		"TOOLSHED_KEY_DEPLOY_MANAGER",
+		"deploy-manager",
+		"rbac-test-deploy-manager",
+	],
+];
+
+for (const [envName, role, label] of optionalRoleKeys) {
+	const key = process.env[envName]?.trim();
+	if (!key) {
+		continue;
+	}
+	const { rowCount } = await db().query(
+		`INSERT INTO api_keys (key_hash, role, label)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (key_hash) DO NOTHING`,
+		[hashApiKey(key), role, label],
+	);
+	if (rowCount) {
+		console.log(`inserted api key (role: ${role}, label: ${label})`);
+	}
+}
+
 await closeDb();
 console.log(`migrations complete (${files.length} file(s) in catalog)`);

@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "toolshed": {
+      "url": "https://mcp-toolshed.onrender.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${env:TOOLSHED_API_KEY}"
+      }
+    }
+  }
+}
