@@ -16,41 +16,189 @@ Agent → POST /mcp → search_tools → get_tool_schema → tools/call → prov
 
 `tools/list` intentionally returns only meta-tools. Server instructions tell agents to use progressive discovery.
 
-## Quick start (local)
+---
+
+## Setup guide
+
+### Prerequisites
+
+- **Node.js 22+**
+- **Docker** (local Postgres only)
+- **Render account** ([dashboard.render.com](https://dashboard.render.com))
+- **Render CLI** (optional, for Blueprint deploy): `brew install render && render login`
+
+### 1. Clone and configure
 
 ```bash
+git clone https://github.com/render-examples/mcp-toolshed.git
+cd mcp-toolshed
 cp .env.example .env
-docker compose up -d postgres
+```
+
+Edit `.env` — at minimum set:
+
+| Variable | Local value | Notes |
+|----------|-------------|-------|
+| `DATABASE_URL` | `postgresql://toolshed:toolshed@localhost:5433/toolshed` | Matches `docker-compose.yml` |
+| `TOOLSHED_BOOTSTRAP_API_KEY` | any secret string | Becomes your admin API key after migrate |
+| `RENDER_API_KEY` | your Render API key | Enables the Render provider |
+
+Generate a production-grade key:
+
+```bash
+openssl rand -hex 32
+```
+
+### 2. Run locally
+
+```bash
+docker compose up -d postgres   # start Postgres on port 5433
 npm install
-npm run db:migrate
-npm run dev
+npm run db:migrate              # applies migrations + inserts bootstrap key
+npm run dev                     # http://localhost:3000
 ```
 
-Connect an MCP client to `http://localhost:3000/mcp` with:
+Verify:
+
+```bash
+curl http://localhost:3000/ready
+# → {"status":"ok","toolCount":N}
+```
+
+If you have **no provider credentials** yet, add to `.env`:
 
 ```
-Authorization: Bearer dev-toolshed-key-change-me
+TOOLSHED_ALLOW_EMPTY=true
 ```
 
-If no provider credentials are set, add `TOOLSHED_ALLOW_EMPTY=true` for local `/ready` checks.
+### 3. Deploy to Render
 
-## Deploy to Render
+The repo includes a Blueprint (`render.yaml`) that creates **one Web Service** + **one Postgres database**.
+
+#### Option A — Render CLI
 
 ```bash
 render blueprint launch
 ```
 
-1. Set `TOOLSHED_BOOTSTRAP_API_KEY` before first deploy (inserted into `api_keys` on migrate).
-2. Set provider credentials (`RENDER_API_KEY`, etc.).
-3. **Unset `TOOLSHED_BOOTSTRAP_API_KEY`** after deploy — auth uses the `api_keys` table only.
+Select your workspace and confirm resource creation when prompted.
+
+#### Option B — Render Dashboard
+
+1. Go to [dashboard.render.com](https://dashboard.render.com) → **New** → **Blueprint**
+2. Connect the `render-examples/mcp-toolshed` repository
+3. Review the two resources (`mcp-toolshed`, `toolshed-db`) and apply
+
+#### Secrets to set at deploy time
+
+Render prompts for these (`sync: false` in `render.yaml`):
+
+| Variable | Required | Purpose |
+|----------|----------|---------|
+| `TOOLSHED_BOOTSTRAP_API_KEY` | **Yes (first deploy)** | Admin API key; hashed into `api_keys` on migrate |
+| `RENDER_API_KEY` | Recommended | Enables Render MCP tools (`render.*`) |
+| `GITHUB_TOKEN` | Optional | Enables GitHub tools (`github.*`) |
+| `SLACK_BOT_TOKEN` | Optional | Enables Slack tools (`slack.*`) |
+| `RENDER_MCP_URL` | Optional | Defaults to `https://mcp.render.com/mcp` |
+| `TICKET_API_URL` / `TICKET_API_KEY` | Optional | Enables custom inline provider stub |
+
+**Health check note:** `/ready` returns 200 only when Postgres is up **and** at least one provider loaded tools. For a working deploy, set `RENDER_API_KEY` (or another provider credential). Use `TOOLSHED_ALLOW_EMPTY=true` only for dev/testing.
+
+**Plan note:** Use **Starter** or higher for the web service. Free tier spins down after inactivity.
+
+#### Post-deploy checklist
+
+1. Confirm health: `curl https://<your-service>.onrender.com/ready`
+2. **Unset `TOOLSHED_BOOTSTRAP_API_KEY`** in the Dashboard — auth uses the `api_keys` table only after first migrate
+3. Connect your MCP client (see below)
+4. Add more API keys via Postgres if needed (see [RBAC](#rbac))
+
+### 4. Connect an MCP client
+
+Your toolshed URL:
+
+```
+https://<your-service>.onrender.com/mcp
+```
+
+All requests require:
+
+```
+Authorization: Bearer <your-api-key>
+```
+
+#### Cursor
+
+Add to MCP settings (`.cursor/mcp.json` or Cursor Settings → MCP):
+
+```json
+{
+  "mcpServers": {
+    "toolshed": {
+      "url": "https://mcp-toolshed.onrender.com/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_API_KEY"
+      }
+    }
+  }
+}
+```
+
+#### Claude Desktop / other Streamable HTTP clients
+
+Use the same URL and `Authorization` header. Clients must support MCP Streamable HTTP.
+
+### 5. Use the agent workflow
+
+After connecting, agents discover tools progressively:
+
+```
+1. tools/list        → [search_tools, get_tool_schema]
+2. search_tools      → { "query": "list render services" }
+3. get_tool_schema   → { "name": "render.list_services" }
+4. tools/call        → { "name": "render.list_services", "arguments": { ... } }
+```
+
+Example `search_tools` query strings:
+
+- `"list render services"`
+- `"create pull request on github"`
+- `"post slack message"`
+
+### 6. Add or enable providers
+
+Providers are TypeScript modules in `providers/`. Each is enabled when its env vars are set.
+
+| Provider | File | Enable with |
+|----------|------|-------------|
+| Render | `providers/render.ts` | `RENDER_API_KEY` |
+| GitHub | `providers/github.ts` | `GITHUB_TOKEN` |
+| Slack | `providers/slack.ts` | `SLACK_BOT_TOKEN` |
+| Custom | `providers/custom.ts` | `TICKET_API_URL` + `TICKET_API_KEY` |
+
+To add a new provider:
+
+1. Create `providers/my-api.ts` (copy a stub)
+2. Register it in `providers/index.ts`
+3. Commit, push, and redeploy
+
+### Troubleshooting
+
+| Symptom | Fix |
+|---------|-----|
+| `/ready` returns 503 | Set a provider credential (`RENDER_API_KEY`) or `TOOLSHED_ALLOW_EMPTY=true` |
+| `401` on `/mcp` | Check `Authorization: Bearer …` matches a key in `api_keys` |
+| Deploy stuck on health check | Postgres not ready, or zero providers loaded — check logs |
+| No Render tools in search | Verify `RENDER_API_KEY` is set and service restarted after adding it |
+| Bootstrap key stopped working | Expected after unsetting env var — key should still work via `api_keys` table; re-run migrate if needed |
+
+View logs in the Render Dashboard → **mcp-toolshed** → **Logs**.
+
+---
 
 ## Adding a provider
 
-1. Create `providers/my-api.ts` (see stubs: `render.ts`, `github.ts`, `slack.ts`, `custom.ts`)
-2. Register it in `providers/index.ts`
-3. Commit and deploy
-
-### Provider types
+See [Setup guide §6](#6-add-or-enable-providers) for the workflow. Provider types:
 
 | Type | Use for |
 |------|---------|
@@ -81,15 +229,6 @@ node -e "const c=require('crypto'); console.log(c.createHash('sha256').update('m
 ```sql
 INSERT INTO api_keys (key_hash, role, label)
 VALUES ('<hash-from-above>', 'implementer', 'ci-bot');
-```
-
-## Agent workflow
-
-```
-1. tools/list        → [search_tools, get_tool_schema]
-2. search_tools      → matching tool names (RBAC-filtered)
-3. get_tool_schema   → full inputSchema for one tool
-4. tools/call        → execute via provider adapter
 ```
 
 ## Health
