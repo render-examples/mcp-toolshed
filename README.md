@@ -2,7 +2,8 @@
 
 A standalone MCP aggregation layer for Render users. One endpoint, many tools — discovered via `search_tools`, governed by RBAC, backed by a code registry.
 
-Agents connect to a single URL instead of configuring Render, GitHub, Slack, and custom MCP servers separately.
+Agents connect to a single URL instead of configuring Render, GitHub, the
+Intelligence Template, Slack, and custom MCP servers separately.
 
 ## Architecture
 
@@ -105,6 +106,9 @@ Render prompts for these (`sync: false` in `render.yaml`):
 | `RENDER_API_KEY` | Recommended | Enables Render MCP tools (`render.*`) |
 | `GITHUB_TOKEN` | Optional | Enables GitHub tools through GitHub's hosted MCP server (`github.*`) |
 | `GITHUB_MCP_URL` | Optional | Defaults to `https://api.githubcopilot.com/mcp/` |
+| `INTEL_MCP_URL` | With Intelligence | URL of the contained intelligence MCP endpoint |
+| `INTEL_MCP_API_KEY` | With Intelligence | Service token shared only with `intel-mcp` |
+| `INTEL_MCP_TOOL_PREFIX` | Optional | Match `mcp.namespace` in `intel.yaml`; defaults to `intel` |
 | `SLACK_BOT_TOKEN` | Optional | Slack bot token (`xoxb-...`) — see [Slack setup](#slack-setup) |
 | `SLACK_TEAM_ID` | With Slack | Workspace ID (`T...`) — required with `SLACK_BOT_TOKEN` |
 | `SLACK_CHANNEL_IDS` | Optional | Comma-separated channel IDs to limit access |
@@ -184,6 +188,7 @@ Providers are TypeScript modules in `providers/`. Each is enabled when its env v
 |----------|------|-------------|
 | Render | `providers/render.ts` | `RENDER_API_KEY` |
 | GitHub | `providers/github.ts` | `GITHUB_TOKEN` (official hosted MCP) |
+| Intelligence | `providers/intel.ts` | `INTEL_MCP_URL` + `INTEL_MCP_API_KEY` |
 | Slack | `providers/slack.ts` | `SLACK_BOT_TOKEN` + `SLACK_TEAM_ID` (direct Web API adapter) |
 | Custom | `providers/custom.ts` | `TICKET_API_URL` + `TICKET_API_KEY` |
 
@@ -229,7 +234,7 @@ See [Setup guide §6](#6-add-or-enable-providers) for the workflow. Provider typ
 
 | Type | Use for |
 |------|---------|
-| `mcp-remote` | Hosted MCP servers (Render MCP) |
+| `mcp-remote` | Hosted MCP servers (Render MCP, Intelligence Template) |
 | `mcp-stdio` | Locally installed MCP binaries that require stdio |
 | `inline` | Custom REST APIs with TypeScript handlers |
 

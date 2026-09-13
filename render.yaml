@@ -28,6 +28,12 @@ services:
         sync: false
       - key: GITHUB_MCP_URL
         value: https://api.githubcopilot.com/mcp/
+      - key: INTEL_MCP_URL
+        sync: false
+      - key: INTEL_MCP_API_KEY
+        sync: false
+      - key: INTEL_MCP_TOOL_PREFIX
+        value: intel
       - key: SLACK_BOT_TOKEN
         sync: false
       - key: SLACK_TEAM_ID

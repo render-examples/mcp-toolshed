@@ -13,12 +13,12 @@ export interface AccessRule {
 
 export const roles: Record<RoleName, RolePolicy> = {
 	analyst: {
-		discover: { tags: ["deploy", "code", "support", "comms"], maxRisk: "read" },
-		execute: { tags: ["deploy", "code", "support", "comms"], maxRisk: "read" },
+		discover: { tags: ["deploy", "code", "support", "comms", "knowledge"], maxRisk: "read" },
+		execute: { tags: ["deploy", "code", "support", "comms", "knowledge"], maxRisk: "read" },
 	},
 	implementer: {
-		discover: { tags: ["deploy", "code", "support", "comms"], maxRisk: "write" },
-		execute: { tags: ["code", "support", "comms"], maxRisk: "write" },
+		discover: { tags: ["deploy", "code", "support", "comms", "knowledge"], maxRisk: "write" },
+		execute: { tags: ["code", "support", "comms", "knowledge"], maxRisk: "write" },
 	},
 	"deploy-manager": {
 		discover: { prefixes: ["render."], maxRisk: "write" },
