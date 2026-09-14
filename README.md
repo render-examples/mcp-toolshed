@@ -2,8 +2,7 @@
 
 A standalone MCP aggregation layer for Render users. One endpoint, many tools — discovered via `search_tools`, governed by RBAC, backed by a code registry.
 
-Agents connect to a single URL instead of configuring Render, GitHub, the
-Intelligence Template, Slack, and custom MCP servers separately.
+Agents connect to a single URL instead of configuring Render, GitHub, Slack, and custom MCP servers separately.
 
 ## Architecture
 
