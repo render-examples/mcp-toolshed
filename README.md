@@ -4,6 +4,8 @@ A standalone MCP aggregation layer for Render users. One endpoint, many tools â€
 
 Agents connect to a single URL instead of configuring Render, GitHub, Slack, and custom MCP servers separately.
 
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/render-examples/mcp-toolshed)
+
 ## Architecture
 
 - **One Web Service** â€” gateway, search, and all provider adapters run in-process
