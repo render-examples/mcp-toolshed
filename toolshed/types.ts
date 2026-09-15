@@ -1,14 +1,19 @@
+import type {
+	CallToolResult,
+	Tool,
+} from "@modelcontextprotocol/sdk/types.js";
+
 export type Risk = "read" | "write";
 
-export type RoleName = "analyst" | "implementer" | "deploy-manager" | "admin";
+export type RoleName = "analyst" | "implementer" | "admin";
 
 export interface Caller {
+	id: number;
 	role: RoleName;
 	label?: string;
 }
 
-export interface ToolDefinition {
-	name: string;
+export type ToolDefinition = Omit<Tool, "description" | "inputSchema"> & {
 	description: string;
 	inputSchema: Record<string, unknown>;
 	risk: Risk;
@@ -16,12 +21,18 @@ export interface ToolDefinition {
 	providerId: string;
 	/** Original tool name on the upstream MCP server (unprefixed). */
 	upstreamName?: string;
+};
+
+export type ToolCallResult = CallToolResult;
+
+export interface ToolPolicy {
+	risk: Risk;
+	tags: string[];
+	/** Arguments that must be present even when the upstream schema marks them optional. */
+	requiredArguments?: string[];
 }
 
-export interface ToolCallResult {
-	content: Array<{ type: "text"; text: string }>;
-	isError?: boolean;
-}
+export type ToolPolicyManifest = Record<string, ToolPolicy>;
 
 export interface ToolHandlerContext {
 	caller: Caller;
@@ -49,6 +60,8 @@ export interface BaseProviderConfig {
 export interface McpRemoteProviderConfig extends BaseProviderConfig {
 	type: "mcp-remote";
 	url: string;
+	/** Exact upstream tool allowlist. Unlisted tools are not registered. */
+	toolPolicy: ToolPolicyManifest;
 	auth?: {
 		header: string;
 		env: string;
@@ -61,6 +74,8 @@ export interface McpStdioProviderConfig extends BaseProviderConfig {
 	command: string;
 	args: string[];
 	env: Record<string, string>;
+	/** Exact upstream tool allowlist. Unlisted tools are not registered. */
+	toolPolicy: ToolPolicyManifest;
 }
 
 export interface InlineProviderConfig extends BaseProviderConfig {
@@ -98,7 +113,6 @@ export interface ProviderStatus {
 export const ROLE_NAMES: readonly RoleName[] = [
 	"analyst",
 	"implementer",
-	"deploy-manager",
 	"admin",
 ];
 

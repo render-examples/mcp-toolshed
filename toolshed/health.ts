@@ -1,5 +1,9 @@
 import { db } from "./db.js";
-import { getAuditHealth, type AuditHealth } from "./audit.js";
+import {
+	getAuditHealth,
+	probeAuditStorage,
+	type AuditHealth,
+} from "./audit.js";
 import type { ToolRegistry } from "./registry.js";
 import type { ProviderStatus } from "./types.js";
 
@@ -8,11 +12,15 @@ export interface HealthStatus {
 	database: boolean;
 	toolCount: number;
 	allowEmpty: boolean;
+	degraded: boolean;
 	providers: ProviderStatus[];
 	audit: AuditHealth;
 }
 
-export async function checkHealth(registry: ToolRegistry): Promise<HealthStatus> {
+export async function checkHealth(
+	registry: ToolRegistry,
+	probeAudit = false,
+): Promise<HealthStatus> {
 	const allowEmpty = process.env.TOOLSHED_ALLOW_EMPTY === "true";
 	registry.scheduleProviderRefresh();
 	let database = false;
@@ -29,9 +37,20 @@ export async function checkHealth(registry: ToolRegistry): Promise<HealthStatus>
 	const providersHealthy = configuredProviders.every(
 		(provider) => provider.healthy,
 	);
+	if (probeAudit) {
+		await probeAuditStorage().catch(() => undefined);
+	}
 	const audit = getAuditHealth();
-	const ok =
-		database && audit.healthy && providersHealthy && (toolCount > 0 || allowEmpty);
+	const ok = database && (toolCount > 0 || allowEmpty);
+	const degraded = !providersHealthy || !audit.healthy;
 
-	return { ok, database, toolCount, allowEmpty, providers, audit };
+	return {
+		ok,
+		database,
+		toolCount,
+		allowEmpty,
+		degraded,
+		providers,
+		audit,
+	};
 }

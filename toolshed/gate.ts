@@ -24,12 +24,7 @@ export class ProviderUnavailableError extends Error {
 
 /** Serialize bounded async work per provider. */
 export class ProviderGate {
-	private readonly queue: Array<{
-		fn: (signal: AbortSignal) => Promise<unknown>;
-		timeoutMs: number;
-		resolve: (value: unknown) => void;
-		reject: (reason?: unknown) => void;
-	}> = [];
+	private readonly queue: GateTask[] = [];
 	private pending = 0;
 	private active = false;
 	private unavailable = false;
@@ -39,22 +34,37 @@ export class ProviderGate {
 	run<T>(
 		fn: (signal: AbortSignal) => Promise<T>,
 		timeoutMs = DEFAULT_TIMEOUT_MS,
+		signal?: AbortSignal,
 	): Promise<T> {
 		if (this.unavailable) {
 			return Promise.reject(new ProviderUnavailableError());
+		}
+		if (signal?.aborted) {
+			return Promise.reject(abortError());
 		}
 		if (this.pending >= this.maxPending) {
 			return Promise.reject(new ProviderBusyError(this.maxPending));
 		}
 		this.pending++;
+		let task!: GateTask;
 		const run = new Promise<T>((resolve, reject) => {
-			this.queue.push({
+			task = {
 				fn,
 				timeoutMs,
 				resolve: (value) => resolve(value as T),
 				reject,
-			});
+				controller: new AbortController(),
+				state: "queued",
+				promiseSettled: false,
+			};
 		});
+		task.timeout = setTimeout(() => this.expire(task), timeoutMs);
+		if (signal) {
+			task.externalSignal = signal;
+			task.onExternalAbort = () => this.cancel(task);
+			signal.addEventListener("abort", task.onExternalAbort, { once: true });
+		}
+		this.queue.push(task);
 		this.drain();
 		return run;
 	}
@@ -72,35 +82,90 @@ export class ProviderGate {
 	}
 
 	private async execute(task: (typeof this.queue)[number]): Promise<void> {
-		const controller = new AbortController();
-		let returned = false;
-		const timeout = setTimeout(() => {
-			returned = true;
-			this.unavailable = true;
-			task.reject(new ProviderTimeoutError(task.timeoutMs));
-			controller.abort();
-			for (const queued of this.queue.splice(0)) {
-				queued.reject(new ProviderUnavailableError());
-				this.pending--;
-			}
-		}, task.timeoutMs);
+		task.state = "active";
 		try {
-			const value = await task.fn(controller.signal);
-			if (!returned) {
-				returned = true;
+			const value = await task.fn(task.controller.signal);
+			if (!task.promiseSettled) {
+				task.promiseSettled = true;
 				task.resolve(value);
 			}
 		} catch (error) {
-			if (!returned) {
-				returned = true;
+			if (!task.promiseSettled) {
+				task.promiseSettled = true;
 				task.reject(error);
 			}
 		} finally {
-			clearTimeout(timeout);
+			this.cleanup(task);
+			task.state = "done";
 			this.pending--;
 			this.active = false;
 			this.unavailable = false;
 			this.drain();
 		}
 	}
+
+	private expire(task: GateTask): void {
+		this.rejectTask(task, new ProviderTimeoutError(task.timeoutMs));
+	}
+
+	private cancel(task: GateTask): void {
+		this.rejectTask(task, abortError());
+	}
+
+	private rejectTask(task: GateTask, error: Error): void {
+		if (task.state === "done" || task.promiseSettled) {
+			return;
+		}
+		task.promiseSettled = true;
+		task.reject(error);
+		task.controller.abort();
+		if (task.state === "queued") {
+			const index = this.queue.indexOf(task);
+			if (index >= 0) {
+				this.queue.splice(index, 1);
+			}
+			this.cleanup(task);
+			task.state = "done";
+			this.pending--;
+			this.drain();
+			return;
+		}
+		this.unavailable = true;
+		for (const queued of this.queue.splice(0)) {
+			if (!queued.promiseSettled) {
+				queued.promiseSettled = true;
+				queued.reject(new ProviderUnavailableError());
+			}
+			queued.controller.abort();
+			this.cleanup(queued);
+			queued.state = "done";
+			this.pending--;
+		}
+	}
+
+	private cleanup(task: GateTask): void {
+		if (task.timeout) {
+			clearTimeout(task.timeout);
+		}
+		if (task.externalSignal && task.onExternalAbort) {
+			task.externalSignal.removeEventListener("abort", task.onExternalAbort);
+		}
+	}
+}
+
+interface GateTask {
+	fn: (signal: AbortSignal) => Promise<unknown>;
+	timeoutMs: number;
+	resolve: (value: unknown) => void;
+	reject: (reason?: unknown) => void;
+	controller: AbortController;
+	state: "queued" | "active" | "done";
+	promiseSettled: boolean;
+	timeout?: ReturnType<typeof setTimeout>;
+	externalSignal?: AbortSignal;
+	onExternalAbort?: () => void;
+}
+
+function abortError(): DOMException {
+	return new DOMException("The operation was aborted", "AbortError");
 }

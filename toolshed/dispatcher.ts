@@ -39,10 +39,15 @@ export class ToolshedDispatcher {
 		return tool;
 	}
 
+	toolRisk(name: string): ToolDefinition["risk"] | undefined {
+		return this.registry.getTool(name)?.risk;
+	}
+
 	async callTool(
 		name: string,
 		args: Record<string, unknown>,
 		caller: Caller,
+		signal?: AbortSignal,
 	): Promise<ToolCallResult> {
 		const tool = this.registry.getTool(name);
 		if (!tool) {
@@ -56,6 +61,6 @@ export class ToolshedDispatcher {
 		if (!provider) {
 			throw new Error(`provider not found: ${tool.providerId}`);
 		}
-		return provider.callTool(tool, args, { caller });
+		return provider.callTool(tool, args, { caller, signal });
 	}
 }

@@ -1,8 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-	defineInlineProvider,
-	defineMcpRemoteProvider,
-} from "../toolshed/provider.js";
+import { defineInlineProvider } from "../toolshed/provider.js";
 import { ToolRegistry } from "../toolshed/registry.js";
 
 afterEach(() => {
@@ -10,6 +7,20 @@ afterEach(() => {
 });
 
 describe("ToolRegistry", () => {
+	it("rejects duplicate provider IDs before initialization", async () => {
+		const provider = (name: string) =>
+			defineInlineProvider({
+				id: "duplicate",
+				toolPrefix: name,
+				risk: "read",
+				tags: [],
+				tools: [],
+			});
+		await expect(
+			ToolRegistry.create([provider("first"), provider("second")]),
+		).rejects.toThrow("duplicate provider id");
+	});
+
 	it("throws on tool name collision", async () => {
 		const a = defineInlineProvider({
 			id: "a",
@@ -70,43 +81,24 @@ describe("ToolRegistry", () => {
 
 	it("records startup failures and re-probes them", async () => {
 		let available = false;
-		let recoveryRequest = 0;
-		vi.stubGlobal(
-			"fetch",
-			vi.fn(async () => {
-				if (!available) {
-					return new Response("unavailable", { status: 503 });
-				}
-				recoveryRequest++;
-				if (recoveryRequest === 1) {
-					return new Response(
-						JSON.stringify({
-							jsonrpc: "2.0",
-							id: 1,
-							result: { protocolVersion: "2025-06-18" },
-						}),
-						{ headers: { "content-type": "application/json" } },
-					);
-				}
-				if (recoveryRequest === 2) {
-					return new Response(null, { status: 202 });
-				}
-				return new Response(
-					JSON.stringify({
-						jsonrpc: "2.0",
-						id: 2,
-						result: { tools: [{ name: "list_items" }] },
-					}),
-					{ headers: { "content-type": "application/json" } },
-				);
-			}),
-		);
-		const remote = defineMcpRemoteProvider({
+		const remote = defineInlineProvider({
 			id: "remote",
-			url: "https://example.com/mcp",
 			toolPrefix: "remote",
-			risk: "write",
+			risk: "read",
 			tags: [],
+			initialize: async () => {
+				if (!available) throw new Error("unavailable");
+			},
+			tools: [
+				{
+					name: "remote.list_items",
+					description: "List items",
+					inputSchema: { type: "object" },
+					risk: "read",
+					tags: [],
+					handler: async () => ({ content: [{ type: "text", text: "ok" }] }),
+				},
+			],
 		});
 		const registry = await ToolRegistry.create([remote]);
 		expect(registry.providerStatuses()).toEqual([
@@ -151,12 +143,12 @@ describe("ToolRegistry", () => {
 		const resolved = registry.getProvider("stateful")!;
 		const definition = registry.getTool("stateful.read")!;
 		await expect(
-			resolved.callTool(definition, {}, { caller: { role: "admin" } }),
+			resolved.callTool(definition, {}, { caller: { id: 1, role: "admin" } }),
 		).rejects.toThrow("provider unavailable");
 		expect(registry.providerStatuses()[0]?.healthy).toBe(false);
 
 		shouldFail = false;
-		await resolved.callTool(definition, {}, { caller: { role: "admin" } });
+		await resolved.callTool(definition, {}, { caller: { id: 1, role: "admin" } });
 		expect(registry.providerStatuses()[0]?.healthy).toBe(true);
 	});
 

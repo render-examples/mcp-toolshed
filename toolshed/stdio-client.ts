@@ -1,6 +1,11 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { McpStdioProviderConfig, ToolCallResult } from "./types.js";
+
+const DEFAULT_TIMEOUT_MS = 60_000;
+const MAX_TOOL_PAGES = 100;
+const MAX_TOOLS = 5_000;
 
 const SAFE_PARENT_ENV = [
 	"PATH",
@@ -29,14 +34,9 @@ export function childEnvironment(
 }
 
 export class McpStdioClient {
-	private client?: Client;
-
 	constructor(private readonly config: McpStdioProviderConfig) {}
 
 	private async connect(signal?: AbortSignal): Promise<Client> {
-		if (this.client) {
-			return this.client;
-		}
 		const transport = new StdioClientTransport({
 			command: this.config.command,
 			args: this.config.args,
@@ -52,28 +52,38 @@ export class McpStdioClient {
 			await client.close().catch(() => undefined);
 			throw error;
 		}
-		this.client = client;
 		return client;
 	}
 
-	async listTools(signal?: AbortSignal): Promise<
-		Array<{
-			name: string;
-			description?: string;
-			inputSchema?: Record<string, unknown>;
-		}>
-	> {
+	async listTools(signal?: AbortSignal): Promise<Tool[]> {
 		const client = await this.connect(signal);
 		try {
-			const { tools } = await client.listTools(undefined, { signal });
-			return tools.map((t) => ({
-				name: t.name,
-				description: t.description,
-				inputSchema: t.inputSchema as Record<string, unknown>,
-			}));
-		} catch (error) {
-			await this.close().catch(() => undefined);
-			throw error;
+			const tools: Tool[] = [];
+			const seenCursors = new Set<string>();
+			let cursor: string | undefined;
+			for (let page = 0; page < MAX_TOOL_PAGES; page++) {
+				const result = await client.listTools(
+					cursor ? { cursor } : undefined,
+					requestOptions(signal, this.config.timeoutMs),
+				);
+				tools.push(...result.tools);
+				if (tools.length > MAX_TOOLS) {
+					throw new Error(`stdio tool catalog exceeds ${MAX_TOOLS} tools`);
+				}
+				if (!result.nextCursor) {
+					return tools;
+				}
+				if (seenCursors.has(result.nextCursor)) {
+					throw new Error(
+						`stdio tool catalog repeated cursor ${result.nextCursor}`,
+					);
+				}
+				seenCursors.add(result.nextCursor);
+				cursor = result.nextCursor;
+			}
+			throw new Error(`stdio tool catalog exceeds ${MAX_TOOL_PAGES} pages`);
+		} finally {
+			await client.close().catch(() => undefined);
 		}
 	}
 
@@ -83,24 +93,23 @@ export class McpStdioClient {
 		signal?: AbortSignal,
 	): Promise<ToolCallResult> {
 		const client = await this.connect(signal);
-		const result = await client.callTool(
-			{ name, arguments: args },
-			undefined,
-			{ signal },
-		);
-		const content = Array.isArray(result.content)
-			? result.content.map((part) => {
-					if (part.type === "text") {
-						return { type: "text" as const, text: part.text };
-					}
-					return { type: "text" as const, text: JSON.stringify(part) };
-				})
-			: [{ type: "text" as const, text: JSON.stringify(result) }];
-		return { content, isError: Boolean(result.isError) };
+		try {
+			return (await client.callTool(
+				{ name, arguments: args },
+				undefined,
+				requestOptions(signal, this.config.timeoutMs),
+			)) as ToolCallResult;
+		} finally {
+			await client.close().catch(() => undefined);
+		}
 	}
 
 	async close(): Promise<void> {
-		await this.client?.close();
-		this.client = undefined;
+		// Each operation owns and closes its own client process.
 	}
+}
+
+function requestOptions(signal: AbortSignal | undefined, timeoutMs?: number) {
+	const timeout = timeoutMs ?? DEFAULT_TIMEOUT_MS;
+	return { signal, timeout, maxTotalTimeout: timeout };
 }

@@ -20,10 +20,6 @@ export const roles: Record<RoleName, RolePolicy> = {
 		discover: { tags: ["deploy", "code", "support", "comms", "knowledge"], maxRisk: "write" },
 		execute: { tags: ["code", "support", "comms", "knowledge"], maxRisk: "write" },
 	},
-	"deploy-manager": {
-		discover: { prefixes: ["render."], maxRisk: "write" },
-		execute: { prefixes: ["render."], maxRisk: "write" },
-	},
 	admin: {
 		discover: { maxRisk: "write" },
 		execute: { maxRisk: "write" },

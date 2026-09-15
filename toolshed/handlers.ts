@@ -5,8 +5,10 @@ import type { Caller, ToolCallResult } from "./types.js";
 import { validateToolArguments } from "./validate.js";
 
 export type McpToolResponse = {
-	content: Array<{ type: "text"; text: string }>;
+	content: ToolCallResult["content"];
 	isError?: boolean;
+	structuredContent?: Record<string, unknown>;
+	_meta?: Record<string, unknown>;
 };
 
 export async function handleToolCall(
@@ -14,6 +16,7 @@ export async function handleToolCall(
 	caller: Caller,
 	name: string,
 	args: Record<string, unknown>,
+	signal?: AbortSignal,
 ): Promise<McpToolResponse> {
 	const metaTool = META_TOOLS.find((tool) => tool.name === name);
 	if (metaTool) {
@@ -38,12 +41,17 @@ export async function handleToolCall(
 		const tool =
 			META_TOOLS.find((candidate) => candidate.name === toolName) ??
 			dispatcher.getToolSchema(toolName, caller);
+		const {
+			providerId: _providerId,
+			upstreamName: _upstreamName,
+			risk,
+			tags,
+			...mcpTool
+		} = tool;
 		return jsonResult({
-			name: tool.name,
-			description: tool.description,
-			inputSchema: tool.inputSchema,
-			risk: tool.risk,
-			tags: tool.tags,
+			...mcpTool,
+			risk,
+			tags,
 		});
 	}
 
@@ -51,7 +59,7 @@ export async function handleToolCall(
 		return toolError(`unknown meta tool: ${name}`);
 	}
 
-	const result = await dispatcher.callTool(name, args, caller);
+	const result = await dispatcher.callTool(name, args, caller, signal);
 	return passthroughResult(result);
 }
 
@@ -69,10 +77,7 @@ function jsonResult(payload: unknown): McpToolResponse {
 }
 
 function passthroughResult(result: ToolCallResult): McpToolResponse {
-	return {
-		content: result.content,
-		isError: result.isError,
-	};
+	return result;
 }
 
 function toolError(message: string): McpToolResponse {

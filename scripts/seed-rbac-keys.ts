@@ -1,14 +1,14 @@
 import { randomBytes } from "node:crypto";
 import { hashApiKey } from "../toolshed/auth.js";
 
-const ROLES = ["analyst", "implementer", "deploy-manager"] as const;
+const ROLES = ["analyst", "implementer"] as const;
 
 console.log("-- RBAC test keys (save these — shown once)\n");
 
 const statements: string[] = [];
 
 for (const role of ROLES) {
-	const key = `rbac-${role}-${randomBytes(6).toString("hex")}`;
+	const key = `rbac-${role}-${randomBytes(32).toString("base64url")}`;
 	const keyHash = hashApiKey(key);
 	console.log(`${role}:`);
 	console.log(`  TOOLSHED_KEY_${role.toUpperCase().replace("-", "_")}=${key}`);

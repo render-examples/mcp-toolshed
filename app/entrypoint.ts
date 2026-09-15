@@ -2,7 +2,7 @@ import { serve } from "@hono/node-server";
 import { loadRegistry } from "../providers/index.js";
 import { closeDb } from "../toolshed/db.js";
 import { ToolshedDispatcher } from "../toolshed/dispatcher.js";
-import { createApp } from "../toolshed/server.js";
+import { createApp, RequestLifecycle } from "../toolshed/server.js";
 import { closeServer } from "../toolshed/shutdown.js";
 
 const port = Number(process.env.PORT ?? 3000);
@@ -10,7 +10,8 @@ const port = Number(process.env.PORT ?? 3000);
 console.log("loading tool registry…");
 const registry = await loadRegistry();
 const dispatcher = new ToolshedDispatcher(registry);
-const app = createApp({ dispatcher, registry });
+const lifecycle = new RequestLifecycle();
+const app = createApp({ dispatcher, registry, lifecycle });
 
 console.log(`toolshed ready on 0.0.0.0:${port}`);
 console.log(`  health: http://0.0.0.0:${port}/ready`);
@@ -29,7 +30,13 @@ function shutdown(signal: string): Promise<void> {
 async function performShutdown(signal: string): Promise<void> {
 	console.log(`${signal} received — shutting down`);
 	try {
-		await closeServer(server);
+		lifecycle.startDraining();
+		const drained = await lifecycle.waitForIdle(65_000);
+		if (!drained) {
+			console.warn("aborting provider calls that exceeded the drain deadline");
+			lifecycle.abortActive();
+		}
+		await closeServer(server, 10_000);
 		await registry.shutdown();
 		await closeDb();
 		console.log("shutdown complete");

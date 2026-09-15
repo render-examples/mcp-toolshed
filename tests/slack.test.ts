@@ -43,10 +43,12 @@ describe("Slack provider", () => {
 		)!.handler;
 		const result = await handler(
 			{ channel_id: "C_BLOCKED", text: "hello" },
-			{ caller: { role: "admin" } },
+			{ caller: { id: 1, role: "admin" } },
 		);
 		expect(result.isError).toBe(true);
-		expect(result.content[0]?.text).toContain("not allowed");
+		expect(
+			result.content[0]?.type === "text" ? result.content[0].text : undefined,
+		).toContain("not allowed");
 	});
 
 	it("marks Slack API errors as tool errors", async () => {
@@ -63,9 +65,11 @@ describe("Slack provider", () => {
 		const handler = slack.tools.find(
 			(definition) => definition.name === "slack.get_users",
 		)!.handler;
-		const result = await handler({}, { caller: { role: "admin" } });
+		const result = await handler({}, { caller: { id: 1, role: "admin" } });
 		expect(result.isError).toBe(true);
-		expect(result.content[0]?.text).toContain("not_in_channel");
+		expect(
+			result.content[0]?.type === "text" ? result.content[0].text : undefined,
+		).toContain("not_in_channel");
 	});
 
 	it("rejects a token from a different workspace", async () => {

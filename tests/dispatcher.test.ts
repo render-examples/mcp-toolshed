@@ -72,7 +72,8 @@ describe("dispatcher", () => {
 	it("filters search results by RBAC", () => {
 		const dispatcher = new ToolshedDispatcher(mockRegistry(sampleTools));
 		const results = dispatcher.searchTools("list services", {
-			role: "deploy-manager",
+			id: 1,
+			role: "analyst",
 		});
 		expect(results.map((r) => r.name)).toEqual(["render.list_services"]);
 	});
@@ -81,7 +82,8 @@ describe("dispatcher", () => {
 		const dispatcher = new ToolshedDispatcher(mockRegistry(sampleTools));
 		expect(() =>
 			dispatcher.getToolSchema("github.create_pull_request", {
-				role: "deploy-manager",
+				id: 1,
+				role: "analyst",
 			}),
 		).toThrow(AccessDeniedError);
 	});
@@ -92,7 +94,7 @@ describe("dispatcher", () => {
 			dispatcher.callTool(
 				"github.create_pull_request",
 				{},
-				{ role: "implementer" },
+				{ id: 1, role: "implementer" },
 			),
 		).rejects.toBeInstanceOf(InvalidToolArgumentsError);
 	});

@@ -8,11 +8,6 @@ const keys: Array<[string, string, string]> = [
 		"implementer",
 		"rbac-test-implementer",
 	],
-	[
-		process.env.TOOLSHED_KEY_DEPLOY_MANAGER?.trim() ?? "",
-		"deploy-manager",
-		"rbac-test-deploy-manager",
-	],
 ];
 
 for (const [key, role, label] of keys) {

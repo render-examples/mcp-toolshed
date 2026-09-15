@@ -10,13 +10,14 @@ Agents connect to a single URL instead of configuring Render, GitHub, Slack, and
 
 - **One Web Service** — gateway, search, and all provider adapters run in-process
 - **One Postgres** — audit log and API key → role mapping (not the tool catalog)
-- **Code registry** — tool definitions in `providers/*.ts`, loaded at startup
+- **Code registry** — approved tools and policy live in code and load at startup
+- **One Cron Job** — bounded audit retention and interrupted-call reconciliation
 
 ```
 Agent → POST /mcp → search_tools → get_tool_schema → tools/call → provider adapter
 ```
 
-`tools/list` intentionally returns only meta-tools. Server instructions tell agents to use progressive discovery.
+`tools/list` intentionally returns only meta-tools. Server instructions tell agents to use progressive discovery. Remote provider calls use fresh, stateless MCP clients; every resource scope must be supplied in the tool arguments.
 The public `/mcp` endpoint uses MCP Streamable HTTP in stateless JSON-response
 mode; protocol-level sessions are not persisted between requests.
 
@@ -44,7 +45,7 @@ Edit `.env` — at minimum set:
 | Variable | Local value | Notes |
 |----------|-------------|-------|
 | `DATABASE_URL` | `postgresql://toolshed:toolshed@localhost:5433/toolshed` | Matches `docker-compose.yml` |
-| `TOOLSHED_BOOTSTRAP_API_KEY` | any secret string | Becomes your admin API key after migrate |
+| `TOOLSHED_BOOTSTRAP_API_KEY` | any secret string | Becomes the initial admin key only when `api_keys` is empty |
 | `RENDER_API_KEY` | your Render API key | Enables the Render provider |
 
 Generate a production-grade key:
@@ -81,7 +82,7 @@ TOOLSHED_ALLOW_EMPTY=true
 
 ### 3. Deploy to Render
 
-The repo includes a Blueprint (`render.yaml`) that creates **one Web Service** + **one Postgres database**.
+The repo includes a Blueprint (`render.yaml`) that creates **one Web Service**, **one Postgres database**, and **one daily audit-cleanup Cron Job**.
 
 #### Option A — Render CLI
 
@@ -95,7 +96,7 @@ Select your workspace and confirm resource creation when prompted.
 
 1. Go to [dashboard.render.com](https://dashboard.render.com) → **New** → **Blueprint**
 2. Connect the `render-examples/mcp-toolshed` repository
-3. Review the two resources (`mcp-toolshed`, `toolshed-db`) and apply
+3. Review the three resources (`mcp-toolshed`, `toolshed-db`, `mcp-toolshed-audit-cleanup`) and apply
 
 #### Secrets to set at deploy time
 
@@ -107,9 +108,6 @@ Render prompts for these (`sync: false` in `render.yaml`):
 | `RENDER_API_KEY` | Recommended | Enables Render MCP tools (`render.*`) |
 | `GITHUB_TOKEN` | Optional | Enables GitHub tools through GitHub's hosted MCP server (`github.*`) |
 | `GITHUB_MCP_URL` | Optional | Defaults to `https://api.githubcopilot.com/mcp/` |
-| `INTEL_MCP_URL` | With Intelligence | URL of the contained intelligence MCP endpoint |
-| `INTEL_MCP_API_KEY` | With Intelligence | Service token shared only with `intel-mcp` |
-| `INTEL_MCP_TOOL_PREFIX` | Optional | Match `mcp.namespace` in `intel.yaml`; defaults to `intel` |
 | `SLACK_BOT_TOKEN` | Optional | Slack bot token (`xoxb-...`) — see [Slack setup](#slack-setup) |
 | `SLACK_TEAM_ID` | With Slack | Workspace ID (`T...`) — required with `SLACK_BOT_TOKEN` |
 | `SLACK_CHANNEL_IDS` | Optional | Comma-separated channel IDs to limit access |
@@ -117,6 +115,8 @@ Render prompts for these (`sync: false` in `render.yaml`):
 | `TICKET_API_URL` / `TICKET_API_KEY` | Optional | Enables custom inline provider stub |
 | `TOOLSHED_AUDIT_RETENTION_DAYS` | Optional | Audit retention; defaults to 30 days |
 | `TOOLSHED_AUDIT_MAX_ARGUMENT_BYTES` | Optional | Maximum stored argument payload; defaults to 65536 bytes |
+| `TOOLSHED_ALLOWED_ORIGINS` | Optional | Comma-separated browser origins allowed to call `/mcp`; requests with other origins are rejected |
+| `TOOLSHED_ALLOWED_HOSTS` | With custom domains | Comma-separated custom hostnames accepted by `/mcp` |
 
 **Health check note:** `/ready` returns 200 only when Postgres is up **and** at least one provider loaded tools. For a working deploy, set `RENDER_API_KEY` (or another provider credential). Use `TOOLSHED_ALLOW_EMPTY=true` only for dev/testing.
 
@@ -189,15 +189,15 @@ Providers are TypeScript modules in `providers/`. Each is enabled when its env v
 |----------|------|-------------|
 | Render | `providers/render.ts` | `RENDER_API_KEY` |
 | GitHub | `providers/github.ts` | `GITHUB_TOKEN` (official hosted MCP) |
-| Intelligence | `providers/intel.ts` | `INTEL_MCP_URL` + `INTEL_MCP_API_KEY` |
 | Slack | `providers/slack.ts` | `SLACK_BOT_TOKEN` + `SLACK_TEAM_ID` (direct Web API adapter) |
 | Custom | `providers/custom.ts` | `TICKET_API_URL` + `TICKET_API_KEY` |
 
 To add a new provider:
 
 1. Create `providers/my-api.ts` (copy a stub)
-2. Register it in `providers/index.ts`
-3. Commit, push, and redeploy
+2. Add every approved remote/stdio tool to its explicit `toolPolicy`; unlisted upstream tools are ignored
+3. Register it in `providers/index.ts`
+4. Commit, push, and redeploy
 
 ### Slack setup
 
@@ -223,7 +223,7 @@ SLACK_TEAM_ID=T...
 | Deploy stuck on health check | Postgres not ready, or zero providers loaded — check logs |
 | No Render tools in search | Verify `RENDER_API_KEY` is set and service restarted after adding it |
 | No Slack tools in search | Set both `SLACK_BOT_TOKEN` and `SLACK_TEAM_ID`, then redeploy |
-| Bootstrap key stopped working | Expected after unsetting env var — key should still work via `api_keys` table; re-run migrate if needed |
+| Bootstrap key stopped working | Check whether the key was revoked or expired in `api_keys`; migrations never overwrite an existing key set |
 
 View logs in the Render Dashboard → **mcp-toolshed** → **Logs**.
 
@@ -235,7 +235,7 @@ See [Setup guide §6](#6-add-or-enable-providers) for the workflow. Provider typ
 
 | Type | Use for |
 |------|---------|
-| `mcp-remote` | Hosted MCP servers (Render MCP, Intelligence Template) |
+| `mcp-remote` | Hosted MCP servers (Render MCP, GitHub MCP) |
 | `mcp-stdio` | Locally installed MCP binaries that require stdio |
 | `inline` | Custom REST APIs with TypeScript handlers |
 
@@ -245,9 +245,11 @@ depend on the archived reference MCP package.
 
 ## RBAC
 
-Policy lives in `config/rbac.ts`. Roles: `analyst`, `implementer`, `deploy-manager`, `admin`.
+Policy lives in `config/rbac.ts`. Roles: `analyst`, `implementer`, `admin`.
 
-Upstream tools inherit **per-tool risk** (`list_*` / `get_*` → read; others → provider default).
+Remote and stdio tools are deny-by-default. Their exact upstream names, risk,
+tags, and required scoping arguments are declared in `config/tool-policy.ts`.
+New or renamed upstream tools remain unavailable until reviewed.
 
 RBAC is enforced at three layers:
 
@@ -275,28 +277,26 @@ UPDATE api_keys SET revoked_at = now() WHERE label = 'ci-bot';
 
 ## Health
 
-- `GET /ready` — 200 when Postgres is up, configured providers are healthy, and at least one provider tool is loaded (or `TOOLSHED_ALLOW_EMPTY=true`)
-- `GET /health` — same checks plus per-provider and audit-pipeline health,
-  tool counts, timestamps, and last errors
+- `GET /ready` — public, minimal response; 200 when Postgres is up and at least one approved provider tool is loaded (or `TOOLSHED_ALLOW_EMPTY=true`)
+- `GET /health` — admin-authenticated diagnostics with per-provider and audit-pipeline state
 
-Provider calls are serialized through bounded queues and cancelled at their
-configured deadline. A failed provider call marks that provider unhealthy;
-a later successful call restores it.
+Optional provider failures report degraded health without removing healthy
+providers from service. Provider calls use bounded queues whose deadlines begin
+at admission, and cancellation propagates to upstream clients.
 
 ## Audit retention
 
 Arguments are recursively redacted before storage, including nested secret
 objects and environment-variable key/value pairs. Oversized payloads are
-truncated. Cleanup runs opportunistically after audit writes (at most hourly)
-and deletes rows older than `TOOLSHED_AUDIT_RETENTION_DAYS`.
+truncated. Write operations require a durable `started` audit record before
+execution. The daily Cron Job marks abandoned intents `unknown` and deletes
+expired rows in bounded batches.
 
 ## Project layout
 
 ```
 providers/          # Tool sources — edit these
-config/rbac.ts      # Role policies
+config/             # Role policies and explicit remote-tool allowlists
 toolshed/           # Core server (don't fork unless extending)
 migrations/         # Postgres schema (audit + api_keys)
 ```
-
-See [seed.md](./seed.md) for design research and rationale.

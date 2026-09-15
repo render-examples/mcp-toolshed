@@ -28,8 +28,12 @@ export async function resolveCaller(
 		return null;
 	}
 
-	const { rows } = await db().query<{ role: string; label: string | null }>(
-		`SELECT role, label
+	const { rows } = await db().query<{
+		id: number;
+		role: string;
+		label: string | null;
+	}>(
+		`SELECT id, role, label
 		   FROM api_keys
 		  WHERE key_hash = $1
 		    AND revoked_at IS NULL
@@ -44,5 +48,9 @@ export async function resolveCaller(
 		console.warn(`api_keys: invalid role "${rows[0].role}" — rejecting key`);
 		return null;
 	}
-	return { role: rows[0].role, label: rows[0].label ?? undefined };
+	return {
+		id: rows[0].id,
+		role: rows[0].role,
+		label: rows[0].label ?? undefined,
+	};
 }

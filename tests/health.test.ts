@@ -30,7 +30,7 @@ function registry(
 }
 
 describe("checkHealth", () => {
-	it("fails readiness when a configured provider is unhealthy", async () => {
+	it("reports provider degradation without failing core readiness", async () => {
 		const status = await checkHealth(
 			registry(8, [
 				{
@@ -42,7 +42,8 @@ describe("checkHealth", () => {
 				},
 			]),
 		);
-		expect(status.ok).toBe(false);
+		expect(status.ok).toBe(true);
+		expect(status.degraded).toBe(true);
 		expect(status.providers[0]?.error).toBe("connection closed");
 	});
 

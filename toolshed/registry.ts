@@ -25,27 +25,23 @@ export class ToolRegistry {
 
 	static async create(configs: ProviderConfig[]): Promise<ToolRegistry> {
 		const registry = new ToolRegistry();
-		for (const config of configs) {
-			try {
-				const resolved = await resolveProvider(config);
-				if (!resolved) {
-					registry.providerFailures.set(config.id, {
-						id: config.id,
-						configured: false,
-						healthy: true,
-						toolCount: 0,
-					});
-					continue;
+		assertUniqueProviderIds(configs);
+		const attempts = await Promise.all(
+			configs.map(async (config) => {
+				try {
+					return {
+						config,
+						resolved: await resolveWithDeadline(config),
+					};
+				} catch (error) {
+					return { config, error };
 				}
-				registry.providerFailures.delete(config.id);
-				registry.activateProvider(resolved);
-				console.log(
-					`provider ${config.id}: loaded ${resolved.tools.length} tool(s)`,
-				);
-			} catch (error) {
-				if (error instanceof ToolCollisionError) {
-					throw error;
-				}
+			}),
+		);
+		for (const attempt of attempts) {
+			const { config } = attempt;
+			if ("error" in attempt) {
+				const error = attempt.error;
 				registry.providerFailures.set(config.id, {
 					id: config.id,
 					configured: true,
@@ -58,7 +54,21 @@ export class ToolRegistry {
 				console.warn(
 					`provider ${config.id}: failed to load — ${error instanceof Error ? error.message : error}`,
 				);
+				continue;
 			}
+			if (!attempt.resolved) {
+				registry.providerFailures.set(config.id, {
+					id: config.id,
+					configured: false,
+					healthy: true,
+					toolCount: 0,
+				});
+				continue;
+			}
+			registry.activateProvider(attempt.resolved);
+			console.log(
+				`provider ${config.id}: loaded ${attempt.resolved.tools.length} approved tool(s)`,
+			);
 		}
 		if (registry.byName.size === 0) {
 			console.warn(
@@ -226,4 +236,41 @@ export class ToolRegistry {
 
 export function createRegistry(configs: ProviderConfig[]): Promise<ToolRegistry> {
 	return ToolRegistry.create(configs);
+}
+
+function assertUniqueProviderIds(configs: ProviderConfig[]): void {
+	const seen = new Set<string>();
+	for (const config of configs) {
+		if (seen.has(config.id)) {
+			throw new Error(`duplicate provider id: ${config.id}`);
+		}
+		seen.add(config.id);
+	}
+}
+
+async function resolveWithDeadline(
+	config: ProviderConfig,
+): Promise<ResolvedProvider | null> {
+	const timeoutMs = config.timeoutMs ?? 60_000;
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), timeoutMs);
+	try {
+		return await Promise.race([
+			resolveProvider(config, controller.signal),
+			new Promise<never>((_resolve, reject) => {
+				controller.signal.addEventListener(
+					"abort",
+					() =>
+						reject(
+							new Error(
+								`provider ${config.id}: initialization timed out after ${timeoutMs}ms`,
+							),
+						),
+					{ once: true },
+				);
+			}),
+		]);
+	} finally {
+		clearTimeout(timer);
+	}
 }

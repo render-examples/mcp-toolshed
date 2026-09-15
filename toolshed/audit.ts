@@ -2,11 +2,8 @@ import { db } from "./db.js";
 import { redactArguments } from "./redact.js";
 import type { Caller } from "./types.js";
 
-const DEFAULT_RETENTION_DAYS = 30;
 const DEFAULT_MAX_ARGUMENT_BYTES = 64 * 1024;
 const MAX_ERROR_LENGTH = 10_000;
-const CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
-let lastCleanupAt = 0;
 let auditHealthy = true;
 let lastAuditSuccessAt: string | undefined;
 let lastAuditErrorAt: string | undefined;
@@ -19,6 +16,8 @@ export interface AuditHealth {
 	error?: string;
 }
 
+export type FinalAuditStatus = "success" | "denied" | "error" | "unknown";
+
 export function getAuditHealth(): AuditHealth {
 	return {
 		healthy: auditHealthy,
@@ -28,42 +27,88 @@ export function getAuditHealth(): AuditHealth {
 	};
 }
 
-export async function writeAuditEvent(input: {
+/** Persist an execution intent before dispatching a provider operation. */
+export async function beginAuditEvent(input: {
 	caller: Caller;
 	toolName: string;
 	arguments?: Record<string, unknown>;
-	status: "success" | "denied" | "error";
-	errorMessage?: string;
-	durationMs?: number;
-}): Promise<void> {
+}): Promise<number> {
 	try {
-		await db().query(
+		const { rows } = await db().query<{ id: string | number }>(
 			`INSERT INTO audit_events
-        (caller_role, caller_label, tool_name, arguments, status, error_message, duration_ms)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        (api_key_id, caller_role, caller_label, tool_name, arguments, status)
+       VALUES ($1, $2, $3, $4, $5, 'started')
+       RETURNING id`,
 			[
+				input.caller.id,
 				input.caller.role,
 				input.caller.label ?? null,
 				input.toolName,
 				serializeAuditArguments(input.arguments),
+			],
+		);
+		recordAuditSuccess();
+		const id = Number(rows[0]?.id);
+		if (!Number.isSafeInteger(id) || id < 1) {
+			throw new Error("audit insert did not return a valid event id");
+		}
+		return id;
+	} catch (error) {
+		recordAuditFailure(error);
+		throw error;
+	}
+}
+
+export async function completeAuditEvent(
+	id: number,
+	input: {
+		status: FinalAuditStatus;
+		errorMessage?: string;
+		durationMs?: number;
+	},
+): Promise<void> {
+	try {
+		await db().query(
+			`UPDATE audit_events
+			    SET status = $2,
+			        error_message = $3,
+			        duration_ms = $4
+			  WHERE id = $1`,
+			[
+				id,
 				input.status,
-				input.errorMessage?.slice(0, MAX_ERROR_LENGTH) ?? null,
+				sanitizeErrorMessage(input.errorMessage),
 				input.durationMs ?? null,
 			],
 		);
-		auditHealthy = true;
-		lastAuditSuccessAt = new Date().toISOString();
-		lastAuditError = undefined;
+		recordAuditSuccess();
 	} catch (error) {
-		auditHealthy = false;
-		lastAuditErrorAt = new Date().toISOString();
-		lastAuditError = error instanceof Error ? error.message : String(error);
-		console.error("audit write failed:", error);
-		return;
+		recordAuditFailure(error);
+		throw error;
 	}
-	await maybeCleanupAuditEvents().catch((error) => {
-		console.error("audit cleanup failed:", error);
-	});
+}
+
+/** Compatibility helper for non-provider events and tests. */
+export async function writeAuditEvent(input: {
+	caller: Caller;
+	toolName: string;
+	arguments?: Record<string, unknown>;
+	status: FinalAuditStatus;
+	errorMessage?: string;
+	durationMs?: number;
+}): Promise<void> {
+	const id = await beginAuditEvent(input);
+	await completeAuditEvent(id, input);
+}
+
+export async function probeAuditStorage(): Promise<void> {
+	try {
+		await db().query("SELECT id FROM audit_events LIMIT 1");
+		recordAuditSuccess();
+	} catch (error) {
+		recordAuditFailure(error);
+		throw error;
+	}
 }
 
 export function serializeAuditArguments(
@@ -89,15 +134,11 @@ export function serializeAuditArguments(
 				? "null"
 				: "0";
 	}
-	const previewBudget =
-		maxBytes - Buffer.byteLength(emptyEnvelope, "utf8");
+	const previewBudget = maxBytes - Buffer.byteLength(emptyEnvelope, "utf8");
 	let preview = Buffer.from(serialized)
 		.subarray(0, previewBudget)
 		.toString("utf8");
-	let bounded = JSON.stringify({
-		truncated: true,
-		preview,
-	});
+	let bounded = JSON.stringify({ truncated: true, preview });
 	while (Buffer.byteLength(bounded, "utf8") > maxBytes && preview.length) {
 		preview = preview.slice(0, -1);
 		bounded = JSON.stringify({ truncated: true, preview });
@@ -105,25 +146,30 @@ export function serializeAuditArguments(
 	return bounded;
 }
 
-async function maybeCleanupAuditEvents(): Promise<void> {
-	const now = Date.now();
-	if (now - lastCleanupAt < CLEANUP_INTERVAL_MS) {
-		return;
+function sanitizeErrorMessage(message: string | undefined): string | null {
+	if (!message) {
+		return null;
 	}
-	lastCleanupAt = now;
-	const retentionDays = positiveInteger(
-		process.env.TOOLSHED_AUDIT_RETENTION_DAYS,
-		DEFAULT_RETENTION_DAYS,
-	);
-	try {
-		await db().query(
-			"DELETE FROM audit_events WHERE created_at < now() - ($1 * interval '1 day')",
-			[retentionDays],
-		);
-	} catch (error) {
-		lastCleanupAt = 0;
-		throw error;
-	}
+	return message
+		.replace(/\bBearer\s+\S+/gi, "Bearer [REDACTED]")
+		.replace(
+			/([?&](?:token|key|secret|password)=)[^&\s]+/gi,
+			"$1[REDACTED]",
+		)
+		.slice(0, MAX_ERROR_LENGTH);
+}
+
+function recordAuditSuccess(): void {
+	auditHealthy = true;
+	lastAuditSuccessAt = new Date().toISOString();
+	lastAuditError = undefined;
+}
+
+function recordAuditFailure(error: unknown): void {
+	auditHealthy = false;
+	lastAuditErrorAt = new Date().toISOString();
+	lastAuditError = error instanceof Error ? error.message : String(error);
+	console.error("audit operation failed:", error);
 }
 
 function positiveInteger(value: string | undefined, fallback: number): number {

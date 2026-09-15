@@ -7,7 +7,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && node -e \"require('node:fs').cpSync('migrations', 'dist/migrations', { recursive: true })\"",
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json && node -e \"require('node:fs').cpSync('migrations', 'dist/migrations', { recursive: true })\"",
     "start": "node dist/app/entrypoint.js",
     "dev": "node --env-file-if-exists=.env node_modules/.bin/tsx watch app/entrypoint.ts",
     "dev:postgres": "docker compose up postgres",
@@ -18,7 +18,8 @@
     "check": "npm run typecheck && npm test",
     "rbac:seed-keys": "tsx scripts/seed-rbac-keys.ts",
     "rbac:insert-keys": "node --env-file-if-exists=.env --import tsx scripts/insert-rbac-keys.ts",
-    "rbac:test-live": "node --env-file-if-exists=.env node_modules/.bin/tsx scripts/test-live-rbac.ts"
+    "rbac:test-live": "node --env-file-if-exists=.env node_modules/.bin/tsx scripts/test-live-rbac.ts",
+    "audit:cleanup": "node --env-file-if-exists=.env dist/scripts/cleanup-audit.js"
   },
   "dependencies": {
     "@hono/node-server": "^2.0.0",

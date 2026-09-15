@@ -52,6 +52,30 @@ describe("ProviderGate", () => {
 		).rejects.toBeInstanceOf(ProviderTimeoutError);
 	});
 
+	it("counts queue waiting against the call deadline", async () => {
+		const gate = new ProviderGate();
+		const first = gate.run(async () => {
+			await sleep(30);
+		});
+		const queued = gate.run(async () => "too late", 5);
+
+		await expect(queued).rejects.toBeInstanceOf(ProviderTimeoutError);
+		await first;
+	});
+
+	it("removes cancelled work before it executes", async () => {
+		const gate = new ProviderGate();
+		const first = gate.run(async () => {
+			await sleep(20);
+		});
+		const controller = new AbortController();
+		const queued = gate.run(async () => "should not run", 1_000, controller.signal);
+		controller.abort();
+
+		await expect(queued).rejects.toMatchObject({ name: "AbortError" });
+		await first;
+	});
+
 	it("rejects new work while a timed-out operation ignores cancellation", async () => {
 		const gate = new ProviderGate();
 		let release!: () => void;

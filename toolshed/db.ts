@@ -13,6 +13,14 @@ export function db(): pg.Pool {
 			max: positiveInteger(process.env.TOOLSHED_DB_POOL_MAX, 10),
 			connectionTimeoutMillis: 5_000,
 			idleTimeoutMillis: 30_000,
+			query_timeout: positiveInteger(
+				process.env.TOOLSHED_DB_QUERY_TIMEOUT_MS,
+				10_000,
+			),
+			statement_timeout: positiveInteger(
+				process.env.TOOLSHED_DB_STATEMENT_TIMEOUT_MS,
+				10_000,
+			),
 		});
 		pool.on("error", (error) => {
 			console.error("unexpected idle Postgres connection error:", error);

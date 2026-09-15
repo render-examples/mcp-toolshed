@@ -1,98 +1,104 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+	connect: vi.fn(),
+	close: vi.fn(),
+	listTools: vi.fn(),
+	callTool: vi.fn(),
+	clients: [] as unknown[],
+	transports: [] as unknown[],
+}));
+
+vi.mock("@modelcontextprotocol/sdk/client/index.js", () => ({
+	Client: class {
+		constructor() {
+			mocks.clients.push(this);
+		}
+		connect = mocks.connect;
+		close = mocks.close;
+		listTools = mocks.listTools;
+		callTool = mocks.callTool;
+	},
+}));
+
+vi.mock("@modelcontextprotocol/sdk/client/streamableHttp.js", () => ({
+	StreamableHTTPClientTransport: class {
+		constructor(url: URL, options: unknown) {
+			mocks.transports.push({ url, options });
+		}
+	},
+}));
+
 import { McpRemoteClient } from "../toolshed/mcp-client.js";
 
-afterEach(() => {
-	vi.unstubAllGlobals();
+beforeEach(() => {
+	for (const mock of [
+		mocks.connect,
+		mocks.close,
+		mocks.listTools,
+		mocks.callTool,
+	]) {
+		mock.mockReset();
+	}
+	mocks.clients.length = 0;
+	mocks.transports.length = 0;
+	mocks.connect.mockResolvedValue(undefined);
+	mocks.close.mockResolvedValue(undefined);
 });
 
 describe("McpRemoteClient", () => {
-	it("uses the negotiated protocol version and parses multiline SSE data", async () => {
-		const requests: RequestInit[] = [];
-		const responses = [
-			new Response(
-				JSON.stringify({
-					jsonrpc: "2.0",
-					id: 1,
-					result: { protocolVersion: "2025-03-26" },
-				}),
-				{ headers: { "content-type": "application/json" } },
-			),
-			new Response(null, { status: 202 }),
-			new Response(
-				[
-					"event: message",
-					'data: {"jsonrpc":"2.0",',
-					'data: "id":2,"result":{"tools":[{"name":"list_things"}]}}',
-					"",
-					"",
-				].join("\n"),
-				{ headers: { "content-type": "text/event-stream" } },
-			),
-		];
-		vi.stubGlobal(
-			"fetch",
-			vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
-				requests.push(init ?? {});
-				return responses.shift()!;
-			}),
-		);
-
+	it("uses a fresh upstream client for each stateless operation", async () => {
+		mocks.listTools.mockResolvedValue({ tools: [{ name: "list_things" }] });
+		mocks.callTool.mockResolvedValue({
+			content: [{ type: "text", text: "ok" }],
+		});
 		const client = new McpRemoteClient("https://example.com/mcp", {});
-		const tools = await client.listTools();
 
-		expect(tools).toEqual([{ name: "list_things" }]);
-		expect(
-			(requests[2]?.headers as Record<string, string>)[
-				"mcp-protocol-version"
+		await client.listTools();
+		await client.callTool("list_things", {});
+
+		expect(mocks.clients).toHaveLength(2);
+		expect(mocks.connect).toHaveBeenCalledTimes(2);
+		expect(mocks.close).toHaveBeenCalledTimes(2);
+	});
+
+	it("paginates catalogs and rejects repeated cursors", async () => {
+		mocks.listTools
+			.mockResolvedValueOnce({
+				tools: [{ name: "first" }],
+				nextCursor: "same",
+			})
+			.mockResolvedValueOnce({
+				tools: [{ name: "second" }],
+				nextCursor: "same",
+			});
+		const client = new McpRemoteClient("https://example.com/mcp", {});
+
+		await expect(client.listTools()).rejects.toThrow("repeated cursor");
+	});
+
+	it("preserves structured and non-text tool results", async () => {
+		const richResult = {
+			content: [
+				{ type: "image", data: "aGVsbG8=", mimeType: "image/png" },
 			],
-		).toBe("2025-03-26");
-	});
+			structuredContent: { id: 42 },
+			_meta: { traceId: "abc" },
+		};
+		mocks.callTool.mockResolvedValue(richResult);
+		const client = new McpRemoteClient("https://example.com/mcp", {});
 
-	it("cancels an in-flight initialization handshake", async () => {
-		vi.stubGlobal(
-			"fetch",
-			vi.fn(
-				(_url: string | URL | Request, init?: RequestInit) =>
-					new Promise<Response>((_resolve, reject) => {
-						init?.signal?.addEventListener(
-							"abort",
-							() => reject(new DOMException("aborted", "AbortError")),
-							{ once: true },
-						);
-					}),
-			),
+		await expect(client.callTool("render_chart", {})).resolves.toEqual(
+			richResult,
 		);
-		const controller = new AbortController();
-		const client = new McpRemoteClient("https://example.com/mcp", {});
-		const pending = client.listTools(controller.signal);
-		controller.abort();
-		await expect(pending).rejects.toMatchObject({ name: "AbortError" });
 	});
 
-	it("accepts JSON-RPC array responses", async () => {
-		const responses = [
-			new Response(
-				JSON.stringify({
-					jsonrpc: "2.0",
-					id: 1,
-					result: { protocolVersion: "2025-06-18" },
-				}),
-				{ headers: { "content-type": "application/json" } },
-			),
-			new Response(null, { status: 202 }),
-			new Response(
-				JSON.stringify([
-					{
-						jsonrpc: "2.0",
-						id: 2,
-						result: { tools: [{ name: "batch_tool" }] },
-					},
-				]),
-				{ headers: { "content-type": "application/json" } },
-			),
-		];
-		vi.stubGlobal("fetch", vi.fn(async () => responses.shift()!));
-		const client = new McpRemoteClient("https://example.com/mcp", {});
-		await expect(client.listTools()).resolves.toEqual([{ name: "batch_tool" }]);
+	it("requires HTTPS except for localhost development", () => {
+		expect(() => new McpRemoteClient("http://example.com/mcp", {})).toThrow(
+			"must use HTTPS",
+		);
+		expect(
+			() => new McpRemoteClient("http://localhost:3001/mcp", {}),
+		).not.toThrow();
 	});
 });

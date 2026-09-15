@@ -1,4 +1,5 @@
 import { McpRemoteClient } from "../toolshed/mcp-client.js";
+import type { ToolCallResult } from "../toolshed/types.js";
 
 const URL =
 	process.env.TOOLSHED_URL?.trim() ?? "http://localhost:3000/mcp";
@@ -24,7 +25,7 @@ async function search(
 	query: string,
 ): Promise<SearchHit[]> {
 	const result = await client.callTool("search_tools", { query, limit: 30 });
-	const payload = JSON.parse(result.content[0]?.text ?? "{}") as {
+	const payload = JSON.parse(firstText(result) ?? "{}") as {
 		results?: SearchHit[];
 	};
 	return payload.results ?? [];
@@ -43,11 +44,16 @@ async function callAllowed(
 	name: string,
 ): Promise<boolean> {
 	const result = await client.callTool(name, {});
-	if (result.isError && result.content[0]?.text.includes("Access denied")) {
+	if (result.isError && firstText(result)?.includes("Access denied")) {
 		return false;
 	}
 	// Upstream validation errors still mean RBAC allowed the call.
 	return true;
+}
+
+function firstText(result: ToolCallResult): string | undefined {
+	const content = result.content.find((part) => part.type === "text");
+	return content?.type === "text" ? content.text : undefined;
 }
 
 function pick(
@@ -61,7 +67,6 @@ async function main(): Promise<void> {
 	const adminKey = process.env.TOOLSHED_API_KEY?.trim();
 	const analystKey = process.env.TOOLSHED_KEY_ANALYST?.trim();
 	const implementerKey = process.env.TOOLSHED_KEY_IMPLEMENTER?.trim();
-	const deployManagerKey = process.env.TOOLSHED_KEY_DEPLOY_MANAGER?.trim();
 
 	if (!adminKey) {
 		console.error("Set TOOLSHED_API_KEY (admin) to run live RBAC tests.");
@@ -184,25 +189,6 @@ async function main(): Promise<void> {
 		);
 	}
 
-	if (deployManagerKey) {
-		expectations.push(
-			{
-				label: "deploy-manager limited to render in search",
-				key: deployManagerKey,
-				run: async (client) => {
-					const hits = await search(client, "github pull request slack message");
-					if (hits.some((h) => h.name.startsWith("github."))) {
-						throw new Error("deploy-manager should not discover github tools");
-					}
-					const renderHits = await search(client, "list render services");
-					if (!renderHits.some((h) => h.name.startsWith("render."))) {
-						throw new Error("deploy-manager should discover render tools");
-					}
-				},
-			},
-		);
-	}
-
 	let passed = 0;
 	let failed = 0;
 	let skipped = 0;
@@ -226,7 +212,7 @@ async function main(): Promise<void> {
 
 	console.log(`\n${passed} passed, ${failed} failed, ${skipped} skipped`);
 
-	if (!analystKey || !implementerKey || !deployManagerKey) {
+	if (!analystKey || !implementerKey) {
 		console.log(
 			"\nTip: run `npm run rbac:seed-keys`, insert SQL into Postgres, export the keys, then re-run.",
 		);

@@ -1,3 +1,4 @@
+import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import type {
 	InlineProviderConfig,
 	InlineToolDefinition,
@@ -8,9 +9,12 @@ import type {
 	ResolvedProvider,
 	ToolDefinition,
 } from "./types.js";
-import { ProviderGate } from "./gate.js";
+import {
+	ProviderBusyError,
+	ProviderGate,
+	ProviderUnavailableError,
+} from "./gate.js";
 import { McpRemoteClient } from "./mcp-client.js";
-import { inferToolRisk } from "./risk.js";
 import { McpStdioClient } from "./stdio-client.js";
 
 export function defineMcpRemoteProvider(
@@ -50,23 +54,52 @@ function prefixName(prefix: string, name: string): string {
 	return name.startsWith(`${prefix}.`) ? name : `${prefix}.${name}`;
 }
 
-function mapUpstreamTools(
-	config: Pick<ProviderConfig, "id" | "toolPrefix" | "risk" | "tags">,
-	upstream: Array<{
-		name: string;
-		description?: string;
-		inputSchema?: Record<string, unknown>;
-	}>,
+export function mapUpstreamTools(
+	config: McpRemoteProviderConfig | McpStdioProviderConfig,
+	upstream: Tool[],
 ): ToolDefinition[] {
-	return upstream.map((t) => ({
-		name: prefixName(config.toolPrefix, t.name),
-		description: t.description ?? "",
-		inputSchema: t.inputSchema ?? { type: "object", properties: {} },
-		risk: inferToolRisk(t.name, config.risk),
-		tags: [...config.tags],
-		providerId: config.id,
-		upstreamName: t.name,
-	}));
+	const allowed: ToolDefinition[] = [];
+	for (const upstreamTool of upstream) {
+		const policy = config.toolPolicy[upstreamTool.name];
+		if (!policy) {
+			console.warn(
+				`provider ${config.id}: ignoring unapproved upstream tool ${upstreamTool.name}`,
+			);
+			continue;
+		}
+		allowed.push({
+			...upstreamTool,
+			name: prefixName(config.toolPrefix, upstreamTool.name),
+			description: upstreamTool.description ?? "",
+			inputSchema: requireArguments(
+				upstreamTool.inputSchema,
+				policy.requiredArguments,
+			),
+			risk: policy.risk,
+			tags: [...policy.tags],
+			providerId: config.id,
+			upstreamName: upstreamTool.name,
+		});
+	}
+	return allowed;
+}
+
+function requireArguments(
+	inputSchema: Tool["inputSchema"],
+	requiredArguments: string[] | undefined,
+): Tool["inputSchema"] {
+	if (!requiredArguments?.length) {
+		return inputSchema;
+	}
+	const existing = Array.isArray(inputSchema.required)
+		? inputSchema.required.filter(
+				(value): value is string => typeof value === "string",
+			)
+		: [];
+	return {
+		...inputSchema,
+		required: [...new Set([...existing, ...requiredArguments])],
+	};
 }
 
 export async function resolveProvider(
@@ -92,15 +125,22 @@ export async function resolveProvider(
 	});
 	const run = async <T>(
 		fn: (signal: AbortSignal) => Promise<T>,
+		externalSignal?: AbortSignal,
 	): Promise<T> => {
 		try {
-			const result = await gate.run(fn, config.timeoutMs);
+			const result = await gate.run(fn, config.timeoutMs, externalSignal);
 			healthy = true;
 			error = undefined;
 			return result;
 		} catch (cause) {
-			healthy = false;
-			error = cause instanceof Error ? cause.message : String(cause);
+			if (
+				!(cause instanceof ProviderBusyError) &&
+				!(cause instanceof ProviderUnavailableError) &&
+				!(cause instanceof DOMException && cause.name === "AbortError")
+			) {
+				healthy = false;
+				error = cause instanceof Error ? cause.message : String(cause);
+			}
 			throw cause;
 		}
 	};
@@ -118,7 +158,7 @@ export async function resolveProvider(
 						throw new Error(`inline tool not found: ${tool.name}`);
 					}
 					return inline.handler(args, { ...ctx, signal });
-				}),
+				}, ctx.signal),
 			status,
 			...(config.initialize
 				? {
@@ -139,11 +179,11 @@ export async function resolveProvider(
 		return {
 			config,
 			tools,
-			callTool: (tool, args) =>
+			callTool: (tool, args, ctx) =>
 				run(async (signal) => {
 					const upstreamName = tool.upstreamName ?? tool.name;
 					return client.callTool(upstreamName, args, signal);
-				}),
+				}, ctx.signal),
 			status,
 			probe: (probeSignal) =>
 				run(async (gateSignal) => {
@@ -159,11 +199,11 @@ export async function resolveProvider(
 	return {
 		config,
 		tools,
-		callTool: (tool, args) =>
+		callTool: (tool, args, ctx) =>
 			run(async (signal) => {
 				const upstreamName = tool.upstreamName ?? tool.name;
 				return client.callTool(upstreamName, args, signal);
-			}),
+			}, ctx.signal),
 		status,
 		probe: (probeSignal) =>
 			run(async (gateSignal) => {

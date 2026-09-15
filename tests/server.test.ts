@@ -16,6 +16,43 @@ function emptyRegistry(): ToolRegistry {
 }
 
 describe("createApp", () => {
+	it("rejects browser origins unless explicitly allowed", async () => {
+		const app = createApp({
+			dispatcher: new ToolshedDispatcher(emptyRegistry()),
+			registry: emptyRegistry(),
+			resolveCaller: async () => null,
+		});
+		const res = await app.request("/mcp", {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+				origin: "https://evil.example",
+			},
+			body: "{}",
+		});
+		expect(res.status).toBe(403);
+	});
+
+	it("rejects GET for the stateless MCP endpoint", async () => {
+		const app = createApp({
+			dispatcher: new ToolshedDispatcher(emptyRegistry()),
+			registry: emptyRegistry(),
+			resolveCaller: async () => null,
+		});
+		const res = await app.request("/mcp");
+		expect(res.status).toBe(405);
+	});
+
+	it("protects detailed health diagnostics", async () => {
+		const app = createApp({
+			dispatcher: new ToolshedDispatcher(emptyRegistry()),
+			registry: emptyRegistry(),
+			resolveCaller: async () => null,
+		});
+		const res = await app.request("/health");
+		expect(res.status).toBe(401);
+	});
+
 	it("returns MCP-shaped JSON-RPC error when unauthorized", async () => {
 		const app = createApp({
 			dispatcher: new ToolshedDispatcher(emptyRegistry()),

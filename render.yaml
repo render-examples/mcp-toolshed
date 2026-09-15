@@ -10,6 +10,7 @@ services:
     name: mcp-toolshed
     runtime: docker
     plan: starter
+    maxShutdownDelaySeconds: 90
     preDeployCommand: npm run db:migrate:prod
     healthCheckPath: /ready
     envVars:
@@ -28,12 +29,6 @@ services:
         sync: false
       - key: GITHUB_MCP_URL
         value: https://api.githubcopilot.com/mcp/
-      - key: INTEL_MCP_URL
-        sync: false
-      - key: INTEL_MCP_API_KEY
-        sync: false
-      - key: INTEL_MCP_TOOL_PREFIX
-        value: intel
       - key: SLACK_BOT_TOKEN
         sync: false
       - key: SLACK_TEAM_ID
@@ -44,8 +39,6 @@ services:
         sync: false
       - key: TOOLSHED_KEY_IMPLEMENTER
         sync: false
-      - key: TOOLSHED_KEY_DEPLOY_MANAGER
-        sync: false
       - key: TICKET_API_URL
         sync: false
       - key: TICKET_API_KEY
@@ -54,3 +47,33 @@ services:
         value: "30"
       - key: TOOLSHED_AUDIT_MAX_ARGUMENT_BYTES
         value: "65536"
+      - key: TOOLSHED_ALLOWED_ORIGINS
+        sync: false
+      - key: TOOLSHED_ALLOWED_HOSTS
+        sync: false
+      - key: TOOLSHED_DB_QUERY_TIMEOUT_MS
+        value: "10000"
+      - key: TOOLSHED_DB_STATEMENT_TIMEOUT_MS
+        value: "10000"
+
+  - type: cron
+    name: mcp-toolshed-audit-cleanup
+    runtime: docker
+    plan: starter
+    schedule: "17 3 * * *"
+    dockerCommand: node dist/scripts/cleanup-audit.js
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: toolshed-db
+          property: connectionString
+      - key: TOOLSHED_AUDIT_RETENTION_DAYS
+        value: "30"
+      - key: TOOLSHED_AUDIT_CLEANUP_BATCH_SIZE
+        value: "5000"
+      - key: TOOLSHED_AUDIT_STALE_MINUTES
+        value: "10"
+      - key: TOOLSHED_DB_QUERY_TIMEOUT_MS
+        value: "60000"
+      - key: TOOLSHED_DB_STATEMENT_TIMEOUT_MS
+        value: "60000"

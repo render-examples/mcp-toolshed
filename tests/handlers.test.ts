@@ -59,7 +59,7 @@ describe("handleToolCall", () => {
 
 	it("rejects empty search query", async () => {
 		await expect(
-			handleToolCall(dispatcher, { role: "admin" }, "search_tools", {
+			handleToolCall(dispatcher, { id: 1, role: "admin" }, "search_tools", {
 				query: "",
 			}),
 		).rejects.toThrow("invalid arguments");
@@ -67,7 +67,7 @@ describe("handleToolCall", () => {
 
 	it("rejects string search limits instead of silently coercing them", async () => {
 		await expect(
-			handleToolCall(dispatcher, { role: "admin" }, "search_tools", {
+			handleToolCall(dispatcher, { id: 1, role: "admin" }, "search_tools", {
 				query: "render",
 				limit: "30",
 			}),
@@ -77,23 +77,27 @@ describe("handleToolCall", () => {
 	it("passes through provider content without double-encoding", async () => {
 		const result = await handleToolCall(
 			dispatcher,
-			{ role: "admin" },
+			{ id: 1, role: "admin" },
 			"render.list_services",
 			{},
 		);
-		expect(result.content[0]?.text).toBe("upstream-ok");
+		expect(
+			result.content[0]?.type === "text" ? result.content[0].text : undefined,
+		).toBe("upstream-ok");
 		expect(result.isError).toBeUndefined();
 	});
 
 	it("returns schemas for advertised meta-tools", async () => {
 		const result = await handleToolCall(
 			dispatcher,
-			{ role: "admin" },
+			{ id: 1, role: "admin" },
 			"get_tool_schema",
 			{ name: "search_tools" },
 		);
 		expect(result.isError).toBeUndefined();
-		expect(JSON.parse(result.content[0]!.text)).toMatchObject({
+		const text =
+			result.content[0]?.type === "text" ? result.content[0].text : "{}";
+		expect(JSON.parse(text)).toMatchObject({
 			name: "search_tools",
 			risk: "read",
 		});
